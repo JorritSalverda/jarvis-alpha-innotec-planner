@@ -1,0 +1,87 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+  labels:
+    {{- include "jarvis-alpha-innotec-planner.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  suspend: false
+  jobTemplate:
+    spec:
+      completions: 1
+      parallelism: 1
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      ttlSecondsAfterFinished: {{ .Values.cronjob.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}  
+          labels:
+            {{- include "jarvis-alpha-innotec-planner.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "jarvis-alpha-innotec-planner.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+          - name: {{ .Chart.Name }}
+            securityContext:
+              {{- toYaml .Values.securityContext | nindent 14 }}
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}    
+            env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel }}
+            - name: WEBSOCKET_HOST_IP
+              valueFrom:
+                configMapKeyRef:
+                  key: websocket-host-ip
+                  name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+            - name: WEBSOCKET_HOST_PORT
+              valueFrom:
+                configMapKeyRef:
+                  key: websocket-host-port
+                  name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+            - name: WEBSOCKET_LOGIN_CODE
+              valueFrom:
+                configMapKeyRef:
+                  key: websocket-login-code
+                  name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+            resources:
+              {{- toYaml .Values.resources | nindent 14 }}
+            volumeMounts:
+            - name: configs
+              mountPath: /configs
+            - name: state
+              mountPath: /state
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          terminationGracePeriodSeconds: 300
+          volumes:
+          - name: configs
+            configMap:
+              name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+          - name: state
+            configMap:
+              name: jarvis-spot-price-exporter
