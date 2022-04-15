@@ -1,16 +1,13 @@
-use crate::model::{Config, ConfigSample};
+use crate::model::Config;
 use jarvis_lib::planner_client::PlannerClient;
-use jarvis_lib::model::SpotPricesState;
+use jarvis_lib::model::SpotPrice;
 
-use chrono::Utc;
-use log::{info, warn};
+use log::info;
 use regex::Regex;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
-use std::collections::HashMap;
 use std::env;
 use std::error::Error;
-use uuid::Uuid;
 
 use websocket::client::ClientBuilder;
 use websocket::OwnedMessage;
@@ -58,10 +55,10 @@ pub struct WebsocketClient {
 impl PlannerClient<Config> for WebsocketClient {
     fn plan(
         &self,
-        config: Config,
-        spot_prices_state: Option<SpotPricesState>,
+        _config: Config,
+        _best_spot_prices: Vec<SpotPrice>,
     ) -> Result<(), Box<dyn Error>> {
-        info!("Planning best time to heat tap water for alpha innotec heatpump...")
+        info!("Planning best time to heat tap water for alpha innotec heatpump...");
 
         let connection = ClientBuilder::new(&format!(
             "ws://{}:{}",
@@ -74,26 +71,7 @@ impl PlannerClient<Config> for WebsocketClient {
         let (mut receiver, mut sender) = connection.split()?;
 
         // login
-        let navigation = self.login(&mut receiver, &mut sender)?;
-
-        // // get measurement samples
-        // let grouped_sample_configs =
-        //     self.group_sample_configs_per_navigation(config.sample_configs);
-
-        // measurement.samples = self.get_samples(
-        //     grouped_sample_configs,
-        //     &mut receiver,
-        //     &mut sender,
-        //     navigation,
-        // )?;
-
-        // if let Some(lm) = last_measurement {
-        //     measurement.samples = self.sanitize_samples(measurement.samples, lm.samples)
-        // }
-
-        // println!("Read measurement from alpha innotec heatpump");
-
-        // Ok(measurement)
+        let _navigation = self.login(&mut receiver, &mut sender)?;
 
         Ok(())
     }
@@ -102,34 +80,6 @@ impl PlannerClient<Config> for WebsocketClient {
 impl WebsocketClient {
     pub fn new(config: WebsocketClientConfig) -> Self {
         Self { config }
-    }
-
-    fn group_sample_configs_per_navigation(
-        &self,
-        sample_configs: Vec<ConfigSample>,
-    ) -> HashMap<String, Vec<ConfigSample>> {
-        let mut grouped_sample_configs: HashMap<String, Vec<ConfigSample>> = HashMap::new();
-
-        for sample_config in sample_configs.into_iter() {
-            if grouped_sample_configs
-                .get(&sample_config.navigation)
-                .is_none()
-            {
-                grouped_sample_configs.insert(sample_config.navigation.clone(), vec![]);
-            }
-
-            match grouped_sample_configs.get_mut(&sample_config.navigation) {
-                Some(v) => {
-                    v.push(sample_config);
-                }
-                None => {
-                    grouped_sample_configs
-                        .insert(sample_config.navigation.clone(), vec![sample_config]);
-                }
-            }
-        }
-
-        grouped_sample_configs
     }
 
     fn send_and_await(
@@ -179,47 +129,6 @@ impl WebsocketClient {
         Ok(navigation)
     }
 
-    fn get_samples(
-        &self,
-        grouped_sample_configs: HashMap<String, Vec<ConfigSample>>,
-        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-
-        navigation: Navigation,
-    ) -> Result<Vec<Sample>, Box<dyn Error>> {
-        let mut samples = Vec::new();
-
-        for (nav, sample_configs) in grouped_sample_configs {
-            println!("Fetching values from page {}...", nav);
-            let navigation_id = navigation.get_navigation_item_id(&nav)?;
-            let response_message = self.send_and_await(
-                receiver,
-                sender,
-                websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
-            )?;
-
-            println!(
-                "Reading {} values from response for page {}...",
-                sample_configs.len(),
-                nav
-            );
-            for sample_config in sample_configs.iter() {
-                let value = self.get_item_from_response(&sample_config.item, &response_message)?;
-
-                samples.push(Sample {
-                    entity_type: sample_config.entity_type,
-                    entity_name: sample_config.entity_name.clone(),
-                    sample_type: sample_config.sample_type,
-                    sample_name: sample_config.sample_name.clone(),
-                    metric_type: sample_config.metric_type,
-                    value: value * sample_config.value_multiplier,
-                });
-            }
-        }
-
-        Ok(samples)
-    }
-
     fn get_navigation_from_response(
         &self,
         response_message: String,
@@ -229,6 +138,7 @@ impl WebsocketClient {
         Ok(navigation)
     }
 
+    #[allow(dead_code)]
     fn get_item_from_response(
         &self,
         item: &str,
@@ -268,46 +178,10 @@ impl WebsocketClient {
             }
         };
     }
-
-    fn sanitize_samples(
-        &self,
-        current_samples: Vec<Sample>,
-        last_samples: Vec<Sample>,
-    ) -> Vec<Sample> {
-        let mut sanitized_samples: Vec<Sample> = Vec::new();
-
-        for current_sample in current_samples.into_iter() {
-            // check if there's a corresponding sample in lastSamples and see if the difference with it's value isn't too large
-            let mut sanitize = false;
-            for last_sample in last_samples.iter() {
-                if current_sample.entity_type == last_sample.entity_type
-                    && current_sample.entity_name == last_sample.entity_name
-                    && current_sample.sample_type == last_sample.sample_type
-                    && current_sample.sample_name == last_sample.sample_name
-                    && current_sample.metric_type == last_sample.metric_type
-                {
-                    if current_sample.metric_type == MetricType::Counter
-                        && current_sample.value / last_sample.value > 1.1
-                    {
-                        sanitize = true;
-                        println!("Value for {} is more than 10 percent larger than the last sampled value {}, keeping previous value instead", current_sample.sample_name, last_sample.value);
-                        sanitized_samples.push(last_sample.clone());
-                    }
-
-                    break;
-                }
-            }
-
-            if !sanitize {
-                sanitized_samples.push(current_sample);
-            }
-        }
-
-        sanitized_samples
-    }
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct Navigation {
     // id: String, // `xml:"id,attr"`
     #[serde(rename = "item", default)]
@@ -315,6 +189,7 @@ struct Navigation {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct NavigationItem {
     id: String,   //           `xml:"id,attr"`
     name: String, //           `xml:"name"`
@@ -323,6 +198,7 @@ struct NavigationItem {
 }
 
 impl Navigation {
+    #[allow(dead_code)]
     fn get_navigation_item_id(&self, item_path: &str) -> Result<String, Box<dyn Error>> {
         let item_path_parts: Vec<&str> = item_path.split(" > ").collect();
 
@@ -357,7 +233,6 @@ impl Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jarvis_lib::model::{EntityType, MetricType, SampleType};
 
     #[test]
     fn deserialize_navigation_xml() {
@@ -523,119 +398,4 @@ mod tests {
 
         assert_eq!(value, 8.10);
     }
-
-    #[test]
-    fn group_sample_configs_per_navigation_returns_hashmap_with_grouped_sample_configs() {
-        let sample_configs: Vec<ConfigSample> = vec![
-            ConfigSample {
-                entity_type: EntityType::Device,
-                entity_name: "Alpha Innotec SWCV 92K3".to_string(),
-                sample_type: SampleType::Temperature,
-                sample_name: "Aanvoer".to_string(),
-                metric_type: MetricType::Gauge,
-                value_multiplier: 1.0,
-                navigation: "Informatie > Temperaturen".to_string(),
-                item: "Aanvoer".to_string(),
-            },
-            ConfigSample {
-                entity_type: EntityType::Device,
-                entity_name: "Alpha Innotec SWCV 92K3".to_string(),
-                sample_type: SampleType::Temperature,
-                sample_name: "Retour".to_string(),
-                metric_type: MetricType::Gauge,
-                value_multiplier: 1.0,
-                navigation: "Informatie > Temperaturen".to_string(),
-                item: "Retour".to_string(),
-            },
-            ConfigSample {
-                entity_type: EntityType::Device,
-                entity_name: "Alpha Innotec SWCV 92K3".to_string(),
-                sample_type: SampleType::Energy,
-                sample_name: "Tapwater".to_string(),
-                metric_type: MetricType::Counter,
-                value_multiplier: 3600000.0,
-                navigation: "Informatie > Energie".to_string(),
-                item: "Warmwater".to_string(),
-            },
-        ];
-
-        let websocket_client = WebsocketClient::new(
-            WebsocketClientConfig::new("192.168.178.94".to_string(), 8214, "999999".to_string())
-                .unwrap(),
-        );
-
-        let grouped_sample_configs =
-            websocket_client.group_sample_configs_per_navigation(sample_configs);
-
-        assert_eq!(grouped_sample_configs.len(), 2);
-        assert_eq!(
-            grouped_sample_configs
-                .get(&"Informatie > Temperaturen".to_string())
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            grouped_sample_configs
-                .get(&"Informatie > Energie".to_string())
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn get_measurement() {
-        let websocket_client = WebsocketClient::new(
-            WebsocketClientConfig::new("192.168.195.4".to_string(), 8214, "999999".to_string())
-                .unwrap(),
-        );
-        let config = Config {
-            location: "My address".to_string(),
-            sample_configs: vec![ConfigSample {
-                entity_type: EntityType::Device,
-                entity_name: "Alpha Innotec SWCV 92K3".to_string(),
-                sample_type: SampleType::Temperature,
-                sample_name: "Aanvoer".to_string(),
-                metric_type: MetricType::Gauge,
-                value_multiplier: 1.0,
-                navigation: "Informatie > Temperaturen".to_string(),
-                item: "Aanvoer".to_string(),
-            }],
-        };
-
-        // act
-        let measurement = websocket_client
-            .get_measurement(config, Option::None)
-            .unwrap();
-
-        assert_eq!(measurement.samples.len(), 1);
-        assert_eq!(
-            measurement.samples[0].entity_name,
-            "Alpha Innotec SWCV 92K3".to_string()
-        );
-        assert_eq!(measurement.samples[0].sample_name, "Aanvoer".to_string());
-        assert_eq!(measurement.samples[0].metric_type, MetricType::Gauge);
-        // assert_eq!(measurement.samples[0].value, 0.0);
-    }
 }
-
-// func TestGetNavigationFromResponse(t *testing.T) {
-// 	t.Run("ReturnsValueForItemWithoutUnit", func(t *testing.T) {
-
-// 		client := client{}
-
-// 		response := `<Navigation id='0x45cd88'><item id='0x45e068'><name>Informatie</name><item id='0x45df90'><name>Temperaturen</name></item><item id='0x455968'><name>Ingangen</name></item><item id='0x455760'><name>Uitgangen</name></item><item id='0x45bf10'><name>Aflooptijden</name></item><item id='0x456f08'><name>Bedrijfsuren</name></item><item id='0x4643a8'><name>Storingsbuffer</name></item><item id='0x3ddfa8'><name>Afschakelingen</name></item><item id='0x45d840'><name>Installatiestatus</name></item><item id='0x460cb8'><name>Energie</name></item><item id='0x4586a8'><name>GBS</name></item></item><item id='0x450798'><name>Instelling</name><item id='0x460bd0'><name>Bedrijfsmode</name></item><item id='0x461170'><name>Temperaturen</name></item><item id='0x462988'><name>Systeeminstelling</name></item></item><item id='0x3dc420'><name>Klokprogramma</name><readOnly>true</readOnly><item id='0x453560'><name>Verwarmen</name><readOnly>true</readOnly><item id='0x45e118'><name>Week</name></item><item id='0x45df00'><name>5+2</name></item><item id='0x45c200'><name>Dagen (Ma, Di,...)</name></item></item><item id='0x43e8e8'><name>Warmwater</name><readOnly>true</readOnly><item id='0x4642a8'><name>Week</name></item><item id='0x463940'><name>5+2</name></item><item id='0x463b68'><name>Dagen (Ma, Di,...)</name></item></item><item id='0x3dcc00'><name>Zwembad</name><readOnly>true</readOnly><item id='0x455580'><name>Week</name></item><item id='0x463f78'><name>5+2</name></item><item id='0x462690'><name>Dagen (Ma, Di,...)</name></item></item></item><item id='0x45c7b0'><name>Toegang: Gebruiker</name></item></Navigation>`
-
-// 		// act
-// 		navigation, err := client.getNavigationFromResponse([]byte(response))
-
-// 		assert.Nil(t, err)
-// 		assert.Equal(t, 4, len(navigation.Items))
-// 		assert.Equal(t, "Informatie", navigation.Items[0].Name)
-// 		assert.Equal(t, 10, len(navigation.Items[0].Items))
-// 		assert.Equal(t, "Temperaturen", navigation.Items[0].Items[0].Name)
-// 		assert.Equal(t, "0x45df90", navigation.Items[0].Items[0].ID)
-// 	})
-// }

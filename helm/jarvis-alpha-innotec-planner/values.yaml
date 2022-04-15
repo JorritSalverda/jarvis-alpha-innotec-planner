@@ -14,7 +14,41 @@ config:
   websocketHostPort: 8214
   websocketLoginCode: 999999
   configYaml: |
-    location: My Home
+    planningStrategy: Fragmented
+    plannableLocalTimeSlots:
+      Mon:
+        - from: 0:00:00
+          till: 7:00:00
+        - from: 23:00:00
+          till: 0:00:00
+      Tue:
+        - from: 0:00:00
+          till: 7:00:00
+        - from: 23:00:00
+          till: 0:00:00
+      Wed:
+        - from: 0:00:00
+          till: 7:00:00
+        - from: 23:00:00
+          till: 0:00:00
+      Thu:
+        - from: 0:00:00
+          till: 7:00:00
+        - from: 23:00:00
+          till: 0:00:00
+      Fri:
+        - from: 0:00:00
+          till: 7:00:00
+        - from: 23:00:00
+          till: 0:00:00
+      Sat:
+        - from: 0:00:00
+          till: 0:00:00
+      Sun:
+        - from: 0:00:00
+          till: 0:00:00
+    sessionMinutes: 120
+    localTimeZone: Europe/Amsterdam
 
 logLevel: info
 
