@@ -230,7 +230,7 @@ impl WebsocketClient {
                 .with_timezone(&local_time_zone)
                 .hour();
             let last_item_id = content.item.item.last().unwrap().id.clone();
-            debug!("Setting 5) to {}:00 - 00:00", from_hour);
+            debug!("Setting 5) to {}:00 - 00:00", till_hour);
             self.send(
                 sender,
                 websocket::OwnedMessage::Text(format!(
