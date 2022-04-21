@@ -11,6 +11,5 @@ helm upgrade \
   jorritsalverda/jarvis-alpha-innotec-planner \
   --install \
   --namespace jarvis-alpha-innotec-planner \
-  --set secret.gcpServiceAccountKeyfile='{abc: blabla}' \
   --wait
 ```
