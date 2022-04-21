@@ -3,7 +3,7 @@
 # Declare variables to be passed into your templates.
 
 cronjob:
-  schedule: '*/5 * * * *'
+  schedule: '5 6,18 * * *'
   concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 1
   successfulJobsHistoryLimit: 2
@@ -14,7 +14,7 @@ config:
   websocketHostPort: 8214
   websocketLoginCode: 999999
   configYaml: |
-    planningStrategy: Fragmented
+    planningStrategy: Consecutive
     plannableLocalTimeSlots:
       Mon:
         - from: 0:00:00
@@ -47,7 +47,7 @@ config:
       Sun:
         - from: 0:00:00
           till: 0:00:00
-    sessionMinutes: 120
+    sessionDurationInSeconds: 7200
     localTimeZone: Europe/Amsterdam
 
 logLevel: info

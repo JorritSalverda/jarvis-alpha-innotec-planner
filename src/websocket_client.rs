@@ -1,14 +1,12 @@
 use crate::model::Config;
+use chrono::{Duration, Utc};
+use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
 use jarvis_lib::planner_client::PlannerClient;
-use jarvis_lib::model::SpotPrice;
-
-use log::info;
-use regex::Regex;
+use log::{debug,info};
 use serde::Deserialize;
 use serde_xml_rs::from_str;
 use std::env;
 use std::error::Error;
-
 use websocket::client::ClientBuilder;
 use websocket::OwnedMessage;
 
@@ -56,24 +54,55 @@ impl PlannerClient<Config> for WebsocketClient {
     fn plan(
         &self,
         _config: Config,
-        _best_spot_prices: Vec<SpotPrice>,
+        spot_price_planner: SpotPricePlanner,
+        spot_prices: Vec<SpotPrice>,
     ) -> Result<(), Box<dyn Error>> {
         info!("Planning best time to heat tap water for alpha innotec heatpump...");
 
-        let connection = ClientBuilder::new(&format!(
-            "ws://{}:{}",
-            self.config.host_address, self.config.host_port
-        ))?
-        .origin(format!("http://{}", self.config.host_address))
-        .add_protocol("Lux_WS")
-        .connect_insecure()?;
+        // get best time in next 12 hours
+        let before = Utc::now() + Duration::hours(12);
 
-        let (mut receiver, mut sender) = connection.split()?;
+        let best_spot_prices =
+            spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
 
-        // login
-        let _navigation = self.login(&mut receiver, &mut sender)?;
+        if !best_spot_prices.is_empty() {
+            info!("Found block of {} spot price slots to use for planning heating of tap water", best_spot_prices.len());
 
-        Ok(())
+            let connection = ClientBuilder::new(&format!(
+                "ws://{}:{}",
+                self.config.host_address, self.config.host_port
+            ))?
+            .origin(format!("http://{}", self.config.host_address))
+            .add_protocol("Lux_WS")
+            .connect_insecure()?;
+
+            let (mut receiver, mut sender) = connection.split()?;
+
+            // login
+            let navigation = self.login(&mut receiver, &mut sender)?;
+
+            // navigate to Klokprogramma > Warmwater > Week
+            let nav = "Klokprogramma > Warmwater > Week".to_string();
+            let navigation_id = navigation.get_navigation_item_id(&nav)?;
+            let response_message = self.send_and_await(
+              &mut receiver,
+              &mut sender,
+                websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
+            )?;
+
+            debug!("Retrieved response from '{}':\n{}", &nav, response_message);
+            // GET;0xa57fa0
+            // <Content><item><name>Maandag - Zondag</name><item id='0xa61554'><value>10:00 - 00:00</value><name>1)</name><type>timer</type><raw>600</raw></item><item id='0xa55a74'><value>00:00 - 03:00</value><name>2)</name><type>timer</type><raw>11796480</raw></item><item id='0xa572cc'><value>00:00 - 00:00</value><name>3)</name><type>timer</type><raw>0</raw></item><item id='0xa61484'><value>00:00 - 00:00</value><name>4)</name><type>timer</type><raw>0</raw></item><item id='0xa633b4'><value>00:00 - 00:00</value><name>5)</name><type>timer</type><raw>0</raw></item></item></Content>
+
+            // save new schedule
+            // SAVE;1
+            // <Content><item><name>Maandag - Zondag</name><item id='0xa572cc'><value>10:00 - 00:00</value><name>1)</name><type>timer</type><raw>600</raw></item><item id='0xa42044'><value>00:00 - 03:00</value><name>2)</name><type>timer</type><raw>11796480</raw></item><item id='0xa61554'><value>00:00 - 00:00</value><name>3)</name><type>timer</type><raw>0</raw></item><item id='0xa55a74'><value>00:00 - 00:00</value><name>4)</name><type>timer</type><raw>0</raw></item><item id='0xa561e4'><value>00:00 - 00:00</value><name>5)</name><type>timer</type><raw>0</raw></item></item></Content>
+
+            Ok(())
+        } else {
+            info!("No available best spot prices, not updating heatpump tap water schedule.");
+            Ok(())
+        }
     }
 }
 
@@ -136,47 +165,6 @@ impl WebsocketClient {
         let navigation: Navigation = from_str(&response_message)?;
 
         Ok(navigation)
-    }
-
-    #[allow(dead_code)]
-    fn get_item_from_response(
-        &self,
-        item: &str,
-        response_message: &str,
-    ) -> Result<f64, Box<dyn Error>> {
-        // <Content><item id='0x4816ac'><name>Aanvoer</name><value>22.0°C</value></item><item id='0x44fdcc'><name>Retour</name><value>22.0°C</value></item><item id='0x4807dc'><name>Retour berekend</name><value>23.0°C</value></item><item id='0x45e1bc'><name>Heetgas</name><value>38.0°C</value></item><item id='0x448894'><name>Buitentemperatuur</name><value>11.6°C</value></item><item id='0x48047c'><name>Gemiddelde temp.</name><value>13.1°C</value></item><item id='0x457724'><name>Tapwater gemeten</name><value>54.2°C</value></item><item id='0x45e97c'><name>Tapwater ingesteld</name><value>57.0°C</value></item><item id='0x45a41c'><name>Bron-in</name><value>10.5°C</value></item><item id='0x480204'><name>Bron-uit</name><value>10.3°C</value></item><item id='0x4803cc'><name>Menggroep2-aanvoer</name><value>22.0°C</value></item><item id='0x4609cc'><name>Menggr2-aanv.ingest.</name><value>19.0°C</value></item><item id='0x45a514'><name>Zonnecollector</name><value>5.0°C</value></item><item id='0x461ecc'><name>Zonneboiler</name><value>150.0°C</value></item><item id='0x4817a4'><name>Externe energiebron</name><value>5.0°C</value></item><item id='0x4646b4'><name>Aanvoer max.</name><value>66.0°C</value></item><item id='0x45e76c'><name>Zuiggasleiding comp.</name><value>19.4°C</value></item><item id='0x4607d4'><name>Comp. verwarming</name><value>37.7°C</value></item><item id='0x43e60c'><name>Oververhitting</name><value>4.8 K</value></item><name>Temperaturen</name></Content>
-
-        let re = Regex::new(&format!(
-            r"<item id='[^']*'><name>{}</name><value>(-?[0-9.]+|---)[^<]*</value></item>",
-            item
-        ))?;
-        let matches = match re.captures(response_message) {
-            Some(m) => m,
-            None => {
-                return Err(Box::<dyn Error>::from(format!(
-                    "No match for item {}",
-                    item
-                )));
-            }
-        };
-
-        if matches.len() != 2 {
-            return Err(Box::<dyn Error>::from(format!(
-                "No match for item {}",
-                item
-            )));
-        }
-
-        return match matches.get(1) {
-            None => Ok(0.0),
-            Some(m) => {
-                let value = m.as_str();
-                if value == "---" {
-                    return Ok(0.0);
-                }
-                Ok(value.parse()?)
-            }
-        };
     }
 }
 
@@ -347,55 +335,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(item_id, "0x455968".to_string());
-    }
-
-    #[test]
-    fn get_item_from_response_returns_value_for_item_without_unit() {
-        let websocket_client = WebsocketClient::new(
-            WebsocketClientConfig::new("192.168.178.94".to_string(), 8214, "999999".to_string())
-                .unwrap(),
-        );
-
-        let response_message = "<Content><item id='0x4816ac'><name>Aanvoer</name><value>22.3°C</value></item><item id='0x44fdcc'><name>Retour</name><value>22.0°C</value></item><item id='0x4807dc'><name>Retour berekend</name><value>23.0°C</value></item><item id='0x45e1bc'><name>Heetgas</name><value>38.0°C</value></item><item id='0x448894'><name>Buitentemperatuur</name><value>11.6°C</value></item><item id='0x48047c'><name>Gemiddelde temp.</name><value>13.1°C</value></item><item id='0x457724'><name>Tapwater gemeten</name><value>54.2°C</value></item><item id='0x45e97c'><name>Tapwater ingesteld</name><value>57.0°C</value></item><item id='0x45a41c'><name>Bron-in</name><value>10.5°C</value></item><item id='0x480204'><name>Bron-uit</name><value>10.3°C</value></item><item id='0x4803cc'><name>Menggroep2-aanvoer</name><value>22.0°C</value></item><item id='0x4609cc'><name>Menggr2-aanv.ingest.</name><value>19.0°C</value></item><item id='0x45a514'><name>Zonnecollector</name><value>5.0°C</value></item><item id='0x461ecc'><name>Zonneboiler</name><value>150.0°C</value></item><item id='0x4817a4'><name>Externe energiebron</name><value>5.0°C</value></item><item id='0x4646b4'><name>Aanvoer max.</name><value>66.0°C</value></item><item id='0x45e76c'><name>Zuiggasleiding comp.</name><value>19.4°C</value></item><item id='0x4607d4'><name>Comp. verwarming</name><value>37.7°C</value></item><item id='0x43e60c'><name>Oververhitting</name><value>4.8 K</value></item><name>Temperaturen</name></Content>".to_string();
-
-        //act
-        let value = websocket_client
-            .get_item_from_response(&"Aanvoer".to_string(), &response_message)
-            .unwrap();
-
-        assert_eq!(value, 22.3);
-    }
-
-    #[test]
-    #[should_panic]
-    fn get_item_from_response_returns_error_if_item_id_is_not_in_response() {
-        let websocket_client = WebsocketClient::new(
-            WebsocketClientConfig::new("192.168.178.94".to_string(), 8214, "999999".to_string())
-                .unwrap(),
-        );
-
-        let response_message = "<Content><item id='0x4816ac'><name>Aanvoer</name><value>22.3°C</value></item><item id='0x44fdcc'><name>Retour</name><value>22.0°C</value></item><item id='0x4807dc'><name>Retour berekend</name><value>23.0°C</value></item><item id='0x45e1bc'><name>Heetgas</name><value>38.0°C</value></item><item id='0x448894'><name>Buitentemperatuur</name><value>11.6°C</value></item><item id='0x48047c'><name>Gemiddelde temp.</name><value>13.1°C</value></item><item id='0x457724'><name>Tapwater gemeten</name><value>54.2°C</value></item><item id='0x45e97c'><name>Tapwater ingesteld</name><value>57.0°C</value></item><item id='0x45a41c'><name>Bron-in</name><value>10.5°C</value></item><item id='0x480204'><name>Bron-uit</name><value>10.3°C</value></item><item id='0x4803cc'><name>Menggroep2-aanvoer</name><value>22.0°C</value></item><item id='0x4609cc'><name>Menggr2-aanv.ingest.</name><value>19.0°C</value></item><item id='0x45a514'><name>Zonnecollector</name><value>5.0°C</value></item><item id='0x461ecc'><name>Zonneboiler</name><value>150.0°C</value></item><item id='0x4817a4'><name>Externe energiebron</name><value>5.0°C</value></item><item id='0x4646b4'><name>Aanvoer max.</name><value>66.0°C</value></item><item id='0x45e76c'><name>Zuiggasleiding comp.</name><value>19.4°C</value></item><item id='0x4607d4'><name>Comp. verwarming</name><value>37.7°C</value></item><item id='0x43e60c'><name>Oververhitting</name><value>4.8 K</value></item><name>Temperaturen</name></Content>".to_string();
-
-        //act
-        let _ = websocket_client
-            .get_item_from_response(&"DoesNotExist".to_string(), &response_message)
-            .unwrap();
-    }
-
-    #[test]
-    fn get_item_from_response_returns_value_for_item_with_pressure_unit() {
-        let websocket_client = WebsocketClient::new(
-            WebsocketClientConfig::new("192.168.178.94".to_string(), 8214, "999999".to_string())
-                .unwrap(),
-        );
-
-        let response_message = "<Content><item id='0x4e7944'><name>ASD</name><value>Aan</value></item><item id='0x4ffbfc'><name>EVU</name><value>Aan</value></item><item id='0x4ef3b4'><name>HD</name><value>Uit</value></item><item id='0x4dac64'><name>MOT</name><value>Aan</value></item><item id='0x4ca4c4'><name>SWT</name><value>Uit</value></item><item id='0x4fa864'><name>Analoog-In 21</name><value>0.00 V</value></item><item id='0x4d5f1c'><name>Analoog-In 22</name><value>0.00 V</value></item><item id='0x4e6a3c'><name>HD</name><value>8.10 bar</value></item><item id='0x4ca47c'><name>ND</name><value>8.38 bar</value></item><item id='0x4e8004'><name>Debiet</name><value>1200 l/h</value></item><name>Ingangen</name></Content>".to_string();
-
-        //act
-        let value = websocket_client
-            .get_item_from_response(&"HD".to_string(), &response_message)
-            .unwrap();
-
-        assert_eq!(value, 8.10);
     }
 }

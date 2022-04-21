@@ -1,15 +1,15 @@
 use jarvis_lib::config_client::SetDefaults;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub location: String,
+    pub local_time_zone: String,
 }
 
 impl SetDefaults for Config {
-    fn set_defaults(&mut self) {
-    }
+    fn set_defaults(&mut self) {}
 }
 
 #[cfg(test)]
@@ -25,5 +25,6 @@ mod tests {
         let config: Config = config_client.read_config_from_file().unwrap();
 
         assert_eq!(config.location, "My Home".to_string());
+        assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
     }
 }

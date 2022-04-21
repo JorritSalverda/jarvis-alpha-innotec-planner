@@ -1014,7 +1014,7 @@ dependencies = [
 [[package]]
 name = "jarvis-lib"
 version = "0.1.0"
-source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.33#3a45ea2531327f62648fa5afda737200a9f2f62c"
+source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.39#1792828b6d65574f5fe1691a877e974dc3298d6c"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1023,6 +1023,7 @@ dependencies = [
  "gcp-bigquery-client",
  "k8s-openapi",
  "kube",
+ "log 0.4.16",
  "nats",
  "openssl",
  "serde",
