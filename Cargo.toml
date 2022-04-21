@@ -9,12 +9,13 @@ include = ["src/**/*", "LICENSE", "README.md"]
 
 [dependencies]
 chrono = "0"
+chrono-tz = "0.6"
 env_logger = "0"
 jarvis-lib = { git = "https://github.com/JorritSalverda/jarvis-lib", tag = "0.1.39" }
 log = "0.4.16"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-serde-xml-rs = "0"
+quick-xml = { version = "0.22", features = [ "serialize" ] }
 tokio = { version = "1", features = ["macros"] }
 uuid = { version = "0", features = ["v4"] }
 websocket = "0"
