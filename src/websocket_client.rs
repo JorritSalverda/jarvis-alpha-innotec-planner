@@ -69,8 +69,9 @@ impl PlannerClient<Config> for WebsocketClient {
 
         if !best_spot_prices.is_empty() {
             info!(
-                "Found block of {} spot price slots to use for planning heating of tap water",
-                best_spot_prices.len()
+                "Found block of {} spot price slots to use for planning heating of tap water:\n{:?}",
+                best_spot_prices.len(),
+                best_spot_prices
             );
 
             let connection = ClientBuilder::new(&format!(

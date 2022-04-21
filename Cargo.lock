@@ -1015,7 +1015,7 @@ dependencies = [
 [[package]]
 name = "jarvis-lib"
 version = "0.1.0"
-source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.39#1792828b6d65574f5fe1691a877e974dc3298d6c"
+source = "git+https://github.com/JorritSalverda/jarvis-lib?tag=0.1.40#b71a85785bb547075668ca82218949378571b38c"
 dependencies = [
  "chrono",
  "chrono-tz",
