@@ -1,5 +1,4 @@
 use crate::model::{Config, Content};
-// use chrono::{naive::NaiveTime, DateTime, Utc, Weekday};
 use chrono::{prelude::*, Duration, Utc};
 use chrono_tz::Tz;
 use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
@@ -68,6 +67,19 @@ impl PlannerClient<Config> for WebsocketClient {
             spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
 
         if !best_spot_prices.is_empty() {
+            // if best_spot_prices
+            //     .first()
+            //     .unwrap()
+            //     .from
+            //     .with_timezone(&config.local_time_zone.parse::<Tz>()?)
+            //     .weekday()
+            //     == config.desinfection_day_of_week
+            // {
+            //     // enable continuous desinfection program
+            // } else {
+            //     // disable continuous desinfection program
+            // }
+
             info!(
                 "Found block of {} spot price slots to use for planning heating of tap water:\n{:?}",
                 best_spot_prices.len(),
@@ -173,6 +185,108 @@ impl WebsocketClient {
         Ok(navigation)
     }
 
+    #[allow(dead_code)]
+    fn move_right(
+        &self,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;0".to_string()))?;
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn move_left(
+        &self,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;1".to_string()))?;
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn click(
+        &self,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;2".to_string()))?;
+        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn toggle_continu_desinfection(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        navigation: Navigation,
+    ) -> Result<(), Box<dyn Error>> {
+        self.navigate_to(receiver, sender, navigation, "Afstandsbediening")?;
+
+        // to menu
+        self.click(sender)?;
+
+        // to warmwater
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.click(sender)?;
+
+        // to onderhoudsprogramma
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.click(sender)?;
+
+        // to thermische desinfectie
+        self.click(sender)?;
+
+        // to continu
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+        self.move_right(sender)?;
+
+        // check/uncheck continu
+        self.click(sender)?;
+
+        // apply
+        self.move_right(sender)?;
+        self.click(sender)?;
+
+        // back to home
+        self.click(sender)?;
+        self.click(sender)?;
+        self.click(sender)?;
+        self.click(sender)?;
+        self.click(sender)?;
+
+        Ok(())
+    }
+
+    fn navigate_to(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        navigation: Navigation,
+        nav: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        let navigation_id = navigation.get_navigation_item_id(nav)?;
+        let response_message = self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
+        )?;
+        debug!("Retrieved response from '{}':\n{}", &nav, response_message);
+
+        Ok(response_message)
+    }
+
     fn set_schedule_from_best_spot_prices(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
@@ -181,16 +295,12 @@ impl WebsocketClient {
         config: Config,
         best_spot_prices: Vec<SpotPrice>,
     ) -> Result<(), Box<dyn Error>> {
-        // navigate to Klokprogramma > Warmwater > Week
-        let nav = "Klokprogramma > Warmwater > Week".to_string();
-        let navigation_id = navigation.get_navigation_item_id(&nav)?;
-        let response_message = self.send_and_await(
+        let response_message = self.navigate_to(
             receiver,
             sender,
-            websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
+            navigation,
+            "Klokprogramma > Warmwater > Week",
         )?;
-        debug!("Retrieved response from '{}':\n{}", &nav, response_message);
-
         let content: Content = from_str(&response_message).unwrap();
         debug!("Deserialized response:\n{:?}", content);
 
@@ -205,13 +315,13 @@ impl WebsocketClient {
 
         // get start time from first spot price
         if !best_spot_prices.is_empty() && content.item.item.len() > 1 {
-            let local_time_zone = config.local_time_zone.parse::<Tz>()?;
+            let heatpump_time_zone = config.heatpump_time_zone.parse::<Tz>()?;
 
             let from_hour = best_spot_prices
                 .first()
                 .unwrap()
                 .from
-                .with_timezone(&local_time_zone)
+                .with_timezone(&heatpump_time_zone)
                 .hour();
             let first_item_id = content.item.item.first().unwrap().id.clone();
             debug!("Setting 1) to 00:00 - {}:00", from_hour);
@@ -228,7 +338,7 @@ impl WebsocketClient {
                 .last()
                 .unwrap()
                 .till
-                .with_timezone(&local_time_zone)
+                .with_timezone(&heatpump_time_zone)
                 .hour();
             let last_item_id = content.item.item.last().unwrap().id.clone();
             debug!("Setting 5) to {}:00 - 00:00", till_hour);
@@ -250,7 +360,6 @@ impl WebsocketClient {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct Navigation {
     // id: String, // `xml:"id,attr"`
     #[serde(rename = "item", default)]
@@ -258,7 +367,6 @@ struct Navigation {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct NavigationItem {
     id: String,   //           `xml:"id,attr"`
     name: String, //           `xml:"name"`
@@ -267,7 +375,6 @@ struct NavigationItem {
 }
 
 impl Navigation {
-    #[allow(dead_code)]
     fn get_navigation_item_id(&self, item_path: &str) -> Result<String, Box<dyn Error>> {
         let item_path_parts: Vec<&str> = item_path.split(" > ").collect();
 
@@ -440,6 +547,8 @@ mod tests {
             navigation,
             Config {
                 local_time_zone: "Europe/Amsterdam".to_string(),
+                heatpump_time_zone: "Europe/Amsterdam".to_string(),
+                desinfection_day_of_week: Weekday::Sun,
             },
             vec![
                 SpotPrice {
@@ -464,48 +573,6 @@ mod tests {
                 },
             ],
         )?;
-
-        // 00:00 - 00:00 => SET;set_0xa84d74;0
-        // 00:00 - 01:00 => SET;set_0xa8820c;3932160
-        // 00:00 - 02:00 => SET;set_0xa8820c;7864320
-        // 00:00 - 03:00 => SET;set_0xa8820c;11796480
-        // 00:00 - 04:00 => SET;set_0xa8820c;15728640
-        // 00:00 - 05:00 => SET;set_0xa8820c;19660800
-        // 00:00 - 06:00 => SET;set_0xa8820c;23592960
-        // 00:00 - 07:00 => SET;set_0xa8820c;27525120
-        // 00:00 - 08:00 => SET;set_0xa8820c;31457280
-        // 00:00 - 09:00 => SET;set_0xa8820c;35389440
-        // 00:00 - 10:00 => SET;set_0xa8820c;39321600
-        // 00:00 - 11:00 => SET;set_0xa8820c;43253760
-        // 00:00 - 12:00 => SET;set_0xa8820c;47185920
-        // 00:00 - 13:00 => SET;set_0xa8820c;51118080
-        // 00:00 - 14:00 => SET;set_0xa8820c;55050240
-        // 00:00 - 15:00 => SET;set_0xa8820c;58982400
-        // 00:00 - 16:00 => SET;set_0xa8820c;62914560
-        // 00:00 - 17:00 => SET;set_0xa8820c;66846720
-        // 00:00 - 18:00 => SET;set_0xa8820c;70778880
-        // 00:00 - 19:00 => SET;set_0xa8820c;74711040
-        // 00:00 - 20:00 => SET;set_0xa8820c;78643200
-        // 00:00 - 21:00 => SET;set_0xa8820c;82575360
-        // 00:00 - 22:00 => SET;set_0xa8820c;86507520
-        // 00:00 - 23:00 => SET;set_0xa8820c;90439680
-
-        // 00:00 - 10:00 => SET;set_0xa8820c;39321600
-        // 01:00 - 10:00 => SET;set_0xa8820c;39321660
-        // 02:00 - 10:00 => SET;set_0xa8820c;39321720
-        // 03:00 - 10:00 => SET;set_0xa8820c;39321780
-        //   03:01 - 10:00 => SET;set_0xa8820c;39321781
-        //   03:00 - 10:01 => SET;set_0xa8820c;39387316
-        // 04:00 - 10:00 => SET;set_0xa8820c;39321840
-        // 05:00 - 10:00 => SET;set_0xa8820c;39321900
-        // 06:00 - 10:00 => SET;set_0xa8820c;39321960
-        // 07:00 - 10:00 => SET;set_0xa8820c;39322020
-        // 08:00 - 10:00 => SET;set_0xa8820c;39322080
-        // 09:00 - 10:00 => SET;set_0xa8820c;39322140
-        // 10:00 - 10:00 => SET;set_0xa8820c;39322200
-
-        // from: add 1 per minute
-        // till: add 65536 per minute
 
         Ok(())
     }

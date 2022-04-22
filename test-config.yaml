@@ -1,1 +1,3 @@
 localTimeZone: Europe/Amsterdam
+heatpumpTimeZone: Europe/Amsterdam
+desinfectionDayOfWeek: Sun

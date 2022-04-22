@@ -1,10 +1,13 @@
+use chrono::prelude::*;
 use jarvis_lib::config_client::SetDefaults;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub local_time_zone: String,
+    pub heatpump_time_zone: String,
+    pub desinfection_day_of_week: Weekday,
 }
 
 impl SetDefaults for Config {
@@ -106,5 +109,7 @@ mod tests {
         let config: Config = config_client.read_config_from_file().unwrap();
 
         assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
+        assert_eq!(config.heatpump_time_zone, "Europe/Amsterdam".to_string());
+        assert_eq!(config.desinfection_day_of_week, Weekday::Sun);
     }
 }

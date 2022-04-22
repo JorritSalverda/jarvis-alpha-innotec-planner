@@ -49,6 +49,8 @@ config:
           till: 0:00:00
     sessionDurationInSeconds: 7200
     localTimeZone: Europe/Amsterdam
+    heatpumpTimeZone: UTC
+    desinfectionDayOfWeek: Sun
 
 logLevel: info
 
