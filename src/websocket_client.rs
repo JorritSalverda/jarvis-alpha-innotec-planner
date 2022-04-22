@@ -613,7 +613,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore]
+    #[ignore]
     async fn toggle_continuous_desinfection() -> Result<(), Box<dyn Error>> {
         let websocket_host_ip = env::var("WEBSOCKET_HOST_IP")?;
         let client = WebsocketClient::new(WebsocketClientConfig::from_env(None)?);
