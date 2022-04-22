@@ -44,6 +44,11 @@ pub struct ItemValue {
     pub value: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct State {
+    pub desinfection_enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

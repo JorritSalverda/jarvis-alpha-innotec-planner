@@ -31,6 +31,7 @@ spec:
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          serviceAccountName: {{ include "jarvis-alpha-innotec-planner.serviceAccountName" . }}
           securityContext:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
@@ -57,6 +58,8 @@ spec:
                 configMapKeyRef:
                   key: websocket-login-code
                   name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
+            - name: STATE_FILE_CONFIG_MAP_NAME
+              value: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
             resources:
               {{- toYaml .Values.resources | nindent 14 }}
             volumeMounts:

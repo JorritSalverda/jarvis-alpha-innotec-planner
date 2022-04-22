@@ -1,4 +1,6 @@
-use crate::model::{Config, Content};
+use crate::model::{Config, Content, State};
+use crate::state_client::StateClient;
+use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
 use chrono_tz::Tz;
 use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
@@ -11,11 +13,11 @@ use std::error::Error;
 use websocket::client::ClientBuilder;
 use websocket::OwnedMessage;
 
-#[derive(Debug)]
 pub struct WebsocketClientConfig {
     host_address: String,
     host_port: u32,
     login_code: String,
+    state_client: Option<StateClient>,
 }
 
 impl WebsocketClientConfig {
@@ -23,19 +25,19 @@ impl WebsocketClientConfig {
         host_address: String,
         host_port: u32,
         login_code: String,
+        state_client: Option<StateClient>,
     ) -> Result<Self, Box<dyn Error>> {
         let config = Self {
             host_address,
             host_port,
             login_code,
+            state_client,
         };
-
-        println!("{:?}", config);
 
         Ok(config)
     }
 
-    pub fn from_env() -> Result<Self, Box<dyn Error>> {
+    pub fn from_env(state_client: Option<StateClient>) -> Result<Self, Box<dyn Error>> {
         let host_address =
             env::var("WEBSOCKET_HOST_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
         let host_port: u32 = env::var("WEBSOCKET_HOST_PORT")
@@ -43,7 +45,7 @@ impl WebsocketClientConfig {
             .parse()?;
         let login_code = env::var("WEBSOCKET_LOGIN_CODE")?;
 
-        Self::new(host_address, host_port, login_code)
+        Self::new(host_address, host_port, login_code, state_client)
     }
 }
 
@@ -51,14 +53,25 @@ pub struct WebsocketClient {
     config: WebsocketClientConfig,
 }
 
+#[async_trait]
 impl PlannerClient<Config> for WebsocketClient {
-    fn plan(
+    async fn plan(
         &self,
         config: Config,
         spot_price_planner: SpotPricePlanner,
         spot_prices: Vec<SpotPrice>,
     ) -> Result<(), Box<dyn Error>> {
         info!("Planning best time to heat tap water for alpha innotec heatpump...");
+
+        let current_desinfection_enabled = if let Some(state_client) = &self.config.state_client {
+            let state = state_client.read_state()?;
+            match state {
+                Some(st) => st.desinfection_enabled,
+                None => false,
+            }
+        } else {
+            false
+        };
 
         // get best time in next 12 hours
         let before = Utc::now() + Duration::hours(12);
@@ -67,24 +80,19 @@ impl PlannerClient<Config> for WebsocketClient {
             spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
 
         if !best_spot_prices.is_empty() {
-            // if best_spot_prices
-            //     .first()
-            //     .unwrap()
-            //     .from
-            //     .with_timezone(&config.local_time_zone.parse::<Tz>()?)
-            //     .weekday()
-            //     == config.desinfection_day_of_week
-            // {
-            //     // enable continuous desinfection program
-            // } else {
-            //     // disable continuous desinfection program
-            // }
-
             info!(
                 "Found block of {} spot price slots to use for planning heating of tap water:\n{:?}",
                 best_spot_prices.len(),
                 best_spot_prices
             );
+
+            let desinfection_desired = best_spot_prices
+                .first()
+                .unwrap()
+                .from
+                .with_timezone(&config.local_time_zone.parse::<Tz>()?)
+                .weekday()
+                == config.desinfection_day_of_week;
 
             let connection = ClientBuilder::new(&format!(
                 "ws://{}:{}",
@@ -101,10 +109,23 @@ impl PlannerClient<Config> for WebsocketClient {
             self.set_schedule_from_best_spot_prices(
                 &mut receiver,
                 &mut sender,
-                navigation,
+                &navigation,
                 config,
                 best_spot_prices,
             )?;
+
+            if desinfection_desired != current_desinfection_enabled {
+                // toggle continuous desinfection program
+                self.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
+            }
+
+            if let Some(state_client) = &self.config.state_client {
+                state_client
+                    .store_state(&State {
+                        desinfection_enabled: desinfection_desired,
+                    })
+                    .await?;
+            }
 
             Ok(())
         } else {
@@ -185,86 +206,99 @@ impl WebsocketClient {
         Ok(navigation)
     }
 
-    #[allow(dead_code)]
     fn move_right(
         &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
     ) -> Result<(), Box<dyn Error>> {
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;0".to_string()))?;
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+      debug!("Move right/down");
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;0".to_string()))?;
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
         Ok(())
     }
 
     #[allow(dead_code)]
     fn move_left(
         &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
     ) -> Result<(), Box<dyn Error>> {
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;1".to_string()))?;
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+      debug!("Move left/up");
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;1".to_string()))?;
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn click(
-        &self,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-    ) -> Result<(), Box<dyn Error>> {
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;2".to_string()))?;
-        self.send(sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn toggle_continu_desinfection(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-        navigation: Navigation,
     ) -> Result<(), Box<dyn Error>> {
-        self.navigate_to(receiver, sender, navigation, "Afstandsbediening")?;
+      debug!("Click");
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;2".to_string()))?;
+        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        Ok(())
+    }
+
+    fn toggle_continuous_desinfection(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        navigation: &Navigation,
+    ) -> Result<(), Box<dyn Error>> {
+        info!("Toggling continuous desinfection");
+
+        info!("To Afstandbediening");
+        self.navigate_to(receiver, sender, navigation, "Afstandbediening")?;
 
         // to menu
-        self.click(sender)?;
+        info!("To menu");
+        self.click(receiver, sender)?;
 
         // to warmwater
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.click(sender)?;
+        info!("To warmwater");
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.click(receiver, sender)?;
 
         // to onderhoudsprogramma
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.click(sender)?;
+        info!("To onderhoudsprogramma");
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.click(receiver, sender)?;
 
         // to thermische desinfectie
-        self.click(sender)?;
+        info!("To thermische desinfectie");
+        self.click(receiver, sender)?;
 
         // to continu
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
-        self.move_right(sender)?;
+        info!("To continu");
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
+        self.move_right(receiver, sender)?;
 
         // check/uncheck continu
-        self.click(sender)?;
+        info!("Toggle continu checkbox");
+        self.click(receiver, sender)?;
 
         // apply
-        self.move_right(sender)?;
-        self.click(sender)?;
+        info!("Apply changes");
+        self.move_right(receiver, sender)?;
+        self.click(receiver, sender)?;
 
         // back to home
-        self.click(sender)?;
-        self.click(sender)?;
-        self.click(sender)?;
-        self.click(sender)?;
-        self.click(sender)?;
+        info!("To home");
+        self.click(receiver, sender)?;
+        self.click(receiver, sender)?;
+        self.click(receiver, sender)?;
+        self.click(receiver, sender)?;
 
         Ok(())
     }
@@ -273,9 +307,10 @@ impl WebsocketClient {
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-        navigation: Navigation,
+        navigation: &Navigation,
         nav: &str,
     ) -> Result<String, Box<dyn Error>> {
+        debug!("Navigate to '{}'", nav);
         let navigation_id = navigation.get_navigation_item_id(nav)?;
         let response_message = self.send_and_await(
             receiver,
@@ -291,7 +326,7 @@ impl WebsocketClient {
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-        navigation: Navigation,
+        navigation: &Navigation,
         config: Config,
         best_spot_prices: Vec<SpotPrice>,
     ) -> Result<(), Box<dyn Error>> {
@@ -526,11 +561,11 @@ mod tests {
         assert_eq!(item_id, "0x455968".to_string());
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn update_schedule() -> Result<(), Box<dyn Error>> {
+    async fn update_schedule() -> Result<(), Box<dyn Error>> {
         let websocket_host_ip = env::var("WEBSOCKET_HOST_IP")?;
-        let client = WebsocketClient::new(WebsocketClientConfig::from_env()?);
+        let client = WebsocketClient::new(WebsocketClientConfig::from_env(None)?);
 
         let connection = ClientBuilder::new(&format!("ws://{}:{}", websocket_host_ip, 8214))?
             .origin(format!("http://{}", websocket_host_ip))
@@ -544,7 +579,7 @@ mod tests {
         client.set_schedule_from_best_spot_prices(
             &mut receiver,
             &mut sender,
-            navigation,
+            &navigation,
             Config {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
@@ -573,6 +608,26 @@ mod tests {
                 },
             ],
         )?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    // #[ignore]
+    async fn toggle_continuous_desinfection() -> Result<(), Box<dyn Error>> {
+        let websocket_host_ip = env::var("WEBSOCKET_HOST_IP")?;
+        let client = WebsocketClient::new(WebsocketClientConfig::from_env(None)?);
+
+        let connection = ClientBuilder::new(&format!("ws://{}:{}", websocket_host_ip, 8214))?
+            .origin(format!("http://{}", websocket_host_ip))
+            .add_protocol("Lux_WS")
+            .connect_insecure()?;
+
+        let (mut receiver, mut sender) = connection.split()?;
+
+        let navigation = client.login(&mut receiver, &mut sender)?;
+
+        client.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
 
         Ok(())
     }
