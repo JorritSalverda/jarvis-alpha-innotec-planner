@@ -45,6 +45,7 @@ pub struct ItemValue {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct State {
     pub desinfection_enabled: bool,
 }
