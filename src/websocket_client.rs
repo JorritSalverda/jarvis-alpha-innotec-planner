@@ -1,10 +1,9 @@
-use crate::model::{Config, Content, State};
+use crate::model::{Config, Content, State, TimeSlot};
 use crate::state_client::StateClient;
 
 use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
 use chrono_tz::Tz;
-use jarvis_lib::model::TimeSlot;
 use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
@@ -87,8 +86,8 @@ impl PlannerClient<Config> for WebsocketClient {
             None => now - Duration::days(7),
         };
 
-        // get best time in next 12 hours
-        let before = now + Duration::hours(12);
+        // get best time in next n hours
+        let before = now + Duration::hours(config.maximum_hours_to_plan_ahead as i64);
 
         let best_spot_prices =
             spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
@@ -104,7 +103,8 @@ impl PlannerClient<Config> for WebsocketClient {
                 config.get_local_time_zone()?,
                 &best_spot_prices,
                 &config.desinfection_local_time_slots,
-            )? && desinfection_finished_at < now;
+            )? && desinfection_finished_at
+                < now - Duration::days(config.minimal_days_between_desinfection as i64);
 
             let connection = ClientBuilder::new(&format!(
                 "ws://{}:{}",
@@ -442,6 +442,12 @@ fn are_spot_prices_in_time_slot(
 
         if let Some(time_slots) = local_time_slots.get(&local_from.weekday()) {
             time_slots.iter().any(|time_slot| {
+                if let Some(price_limit) = time_slot.if_price_below {
+                    if spot_price.total_price() >= price_limit {
+                        return false;
+                    }
+                }
+
                 let time_slot_from = local_from.date().and_hms(
                     time_slot.from.hour(),
                     time_slot.from.minute(),
@@ -663,6 +669,8 @@ mod tests {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
                 desinfection_local_time_slots: HashMap::new(),
+                maximum_hours_to_plan_ahead: 12,
+                minimal_days_between_desinfection: 4,
             },
             &vec![
                 SpotPrice {
@@ -707,6 +715,197 @@ mod tests {
         let navigation = client.login(&mut receiver, &mut sender)?;
 
         client.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn are_spot_prices_in_time_slot_returns_true_if_all_spot_prices_fit_inside_time_slots(
+    ) -> Result<(), Box<dyn Error>> {
+        let local_time_zone = "Europe/Amsterdam".parse::<Tz>()?;
+
+        let spot_prices = vec![
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(11, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                market_price: -0.222,
+                market_price_tax: -0.0466956,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(13, 0, 0),
+                market_price: -0.217,
+                market_price_tax: -0.0456582,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+        ];
+
+        let local_time_slots = HashMap::from([
+            (
+                Weekday::Fri,
+                vec![TimeSlot {
+                    from: NaiveTime::from_hms(7, 0, 0),
+                    till: NaiveTime::from_hms(19, 0, 0),
+                    if_price_below: Some(0.0),
+                }],
+            ),
+            (
+                Weekday::Sat,
+                vec![TimeSlot {
+                    from: NaiveTime::from_hms(7, 0, 0),
+                    till: NaiveTime::from_hms(19, 0, 0),
+                    if_price_below: Some(0.1),
+                }],
+            ),
+            (
+                Weekday::Sun,
+                vec![TimeSlot {
+                    from: NaiveTime::from_hms(7, 0, 0),
+                    till: NaiveTime::from_hms(19, 0, 0),
+                    if_price_below: None,
+                }],
+            ),
+        ]);
+
+        let result =
+            are_spot_prices_in_time_slot(local_time_zone, &spot_prices, &local_time_slots)?;
+
+        assert_eq!(result, true);
+
+        Ok(())
+    }
+
+    #[test]
+    fn are_spot_prices_in_time_slot_returns_false_if_not_all_spot_prices_fit_inside_time_slots(
+    ) -> Result<(), Box<dyn Error>> {
+        let local_time_zone = "Europe/Amsterdam".parse::<Tz>()?;
+
+        let spot_prices = vec![
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(11, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                market_price: -0.222,
+                market_price_tax: -0.0466956,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(13, 0, 0),
+                market_price: -0.217,
+                market_price_tax: -0.0456582,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+        ];
+
+        let local_time_slots = HashMap::from([(
+            Weekday::Sat,
+            vec![TimeSlot {
+                from: NaiveTime::from_hms(7, 0, 0),
+                till: NaiveTime::from_hms(14, 0, 0),
+                if_price_below: Some(0.1),
+            }],
+        )]);
+
+        let result =
+            are_spot_prices_in_time_slot(local_time_zone, &spot_prices, &local_time_slots)?;
+
+        assert_eq!(result, false);
+
+        Ok(())
+    }
+
+    #[test]
+    fn are_spot_prices_in_time_slot_returns_false_if_no_spot_prices_fit_inside_time_slots(
+    ) -> Result<(), Box<dyn Error>> {
+        let local_time_zone = "Europe/Amsterdam".parse::<Tz>()?;
+
+        let spot_prices = vec![
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(11, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                market_price: -0.222,
+                market_price_tax: -0.0466956,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(13, 0, 0),
+                market_price: -0.217,
+                market_price_tax: -0.0456582,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+        ];
+
+        let local_time_slots: HashMap<Weekday, Vec<TimeSlot>> = HashMap::new();
+
+        let result =
+            are_spot_prices_in_time_slot(local_time_zone, &spot_prices, &local_time_slots)?;
+
+        assert_eq!(result, false);
+
+        Ok(())
+    }
+
+    #[test]
+    fn are_spot_prices_in_time_slot_returns_false_if_not_all_prices_are_below_configured_price_limit(
+    ) -> Result<(), Box<dyn Error>> {
+        let local_time_zone = "Europe/Amsterdam".parse::<Tz>()?;
+
+        let spot_prices = vec![
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(11, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                market_price: 0.222,
+                market_price_tax: 0.0466956,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+            SpotPrice {
+                id: None,
+                source: None,
+                from: Utc.ymd(2022, 4, 23).and_hms(12, 0, 0),
+                till: Utc.ymd(2022, 4, 23).and_hms(13, 0, 0),
+                market_price: 0.217,
+                market_price_tax: 0.0456582,
+                sourcing_markup_price: 0.017,
+                energy_tax_price: 0.081,
+            },
+        ];
+
+        let local_time_slots = HashMap::from([(
+            Weekday::Sat,
+            vec![TimeSlot {
+                from: NaiveTime::from_hms(7, 0, 0),
+                till: NaiveTime::from_hms(19, 0, 0),
+                if_price_below: Some(0.1),
+            }],
+        )]);
+
+        let result =
+            are_spot_prices_in_time_slot(local_time_zone, &spot_prices, &local_time_slots)?;
+
+        assert_eq!(result, false);
 
         Ok(())
     }

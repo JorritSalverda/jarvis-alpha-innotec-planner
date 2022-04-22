@@ -50,10 +50,20 @@ config:
     sessionDurationInSeconds: 7200
     localTimeZone: Europe/Amsterdam
     heatpumpTimeZone: UTC
+    maximumHoursToPlanAhead: 12
+    minimalDaysBetweenDesinfection: 4
     desinfectionLocalTimeSlots:
+      Fri:
+        - from: 7:00:00
+          till: 19:00:00
+          ifPriceBelow: 0.0
+      Sat:
+        - from: 7:00:00
+          till: 19:00:00
+          ifPriceBelow: 0.1
       Sun:
         - from: 7:00:00
-          till: 0:00:00
+          till: 19:00:00
 
 logLevel: info
 

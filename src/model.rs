@@ -1,7 +1,6 @@
 use chrono::{prelude::*, Weekday};
 use chrono_tz::Tz;
 use jarvis_lib::config_client::SetDefaults;
-use jarvis_lib::model::TimeSlot;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
@@ -11,7 +10,17 @@ use std::error::Error;
 pub struct Config {
     pub local_time_zone: String,
     pub heatpump_time_zone: String,
+    pub maximum_hours_to_plan_ahead: u32,
+    pub minimal_days_between_desinfection: u32,
     pub desinfection_local_time_slots: HashMap<Weekday, Vec<TimeSlot>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeSlot {
+    pub from: NaiveTime,
+    pub till: NaiveTime,
+    pub if_price_below: Option<f64>,
 }
 
 impl Config {
@@ -131,6 +140,57 @@ mod tests {
 
         assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
         assert_eq!(config.heatpump_time_zone, "Europe/Amsterdam".to_string());
-        assert_eq!(config.desinfection_local_time_slots[&Weekday::Sun].len(), 1);
+        assert_eq!(config.maximum_hours_to_plan_ahead, 12);
+        assert_eq!(config.minimal_days_between_desinfection, 4);
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Fri][0]
+                .from
+                .hour(),
+            7
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Fri][0]
+                .till
+                .hour(),
+            19
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Fri][0].if_price_below,
+            Some(0.0)
+        );
+
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sat][0]
+                .from
+                .hour(),
+            7
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sat][0]
+                .till
+                .hour(),
+            19
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sat][0].if_price_below,
+            Some(0.1)
+        );
+
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sun][0]
+                .from
+                .hour(),
+            7
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sun][0]
+                .till
+                .hour(),
+            19
+        );
+        assert_eq!(
+            config.desinfection_local_time_slots[&Weekday::Sun][0].if_price_below,
+            None
+        );
     }
 }
