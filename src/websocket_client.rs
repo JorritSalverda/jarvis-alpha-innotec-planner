@@ -63,18 +63,29 @@ impl PlannerClient<Config> for WebsocketClient {
     ) -> Result<(), Box<dyn Error>> {
         info!("Planning best time to heat tap water for alpha innotec heatpump...");
 
-        let current_desinfection_enabled = if let Some(state_client) = &self.config.state_client {
-            let state = state_client.read_state()?;
-            match state {
-                Some(st) => st.desinfection_enabled,
-                None => false,
-            }
+        let now = Utc::now();
+
+        let state = if let Some(state_client) = &self.config.state_client {
+            state_client.read_state()?
         } else {
-            false
+            None
+        };
+
+        let current_desinfection_enabled = match &state {
+            Some(st) => st.desinfection_enabled,
+            None => false,
+        };
+
+        let desinfection_finished_at = match state {
+            Some(st) => match st.desinfection_finished_at {
+                Some(fa) => fa,
+                None => now - Duration::days(7),
+            },
+            None => now - Duration::days(7),
         };
 
         // get best time in next 12 hours
-        let before = Utc::now() + Duration::hours(12);
+        let before = now + Duration::hours(12);
 
         let best_spot_prices =
             spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
@@ -92,7 +103,8 @@ impl PlannerClient<Config> for WebsocketClient {
                 .from
                 .with_timezone(&config.local_time_zone.parse::<Tz>()?)
                 .weekday()
-                == config.desinfection_day_of_week;
+                == config.desinfection_day_of_week
+                && desinfection_finished_at < now;
 
             let connection = ClientBuilder::new(&format!(
                 "ws://{}:{}",
@@ -111,7 +123,7 @@ impl PlannerClient<Config> for WebsocketClient {
                 &mut sender,
                 &navigation,
                 config,
-                best_spot_prices,
+                &best_spot_prices,
             )?;
 
             if desinfection_desired != current_desinfection_enabled {
@@ -123,6 +135,7 @@ impl PlannerClient<Config> for WebsocketClient {
                 state_client
                     .store_state(&State {
                         desinfection_enabled: desinfection_desired,
+                        desinfection_finished_at: Some(best_spot_prices.last().unwrap().till),
                     })
                     .await?;
             }
@@ -211,9 +224,17 @@ impl WebsocketClient {
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
     ) -> Result<(), Box<dyn Error>> {
-      debug!("Move right/down");
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;0".to_string()))?;
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        debug!("Move right/down");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;0".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
         Ok(())
     }
 
@@ -223,9 +244,17 @@ impl WebsocketClient {
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
     ) -> Result<(), Box<dyn Error>> {
-      debug!("Move left/up");
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;1".to_string()))?;
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        debug!("Move left/up");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;1".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
         Ok(())
     }
 
@@ -234,9 +263,17 @@ impl WebsocketClient {
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
     ) -> Result<(), Box<dyn Error>> {
-      debug!("Click");
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;2".to_string()))?;
-        self.send_and_await(receiver, sender, websocket::OwnedMessage::Text("MOVE;6".to_string()))?;
+        debug!("Click");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;2".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
         Ok(())
     }
 
@@ -328,7 +365,7 @@ impl WebsocketClient {
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
         navigation: &Navigation,
         config: Config,
-        best_spot_prices: Vec<SpotPrice>,
+        best_spot_prices: &[SpotPrice],
     ) -> Result<(), Box<dyn Error>> {
         let response_message = self.navigate_to(
             receiver,
@@ -585,7 +622,7 @@ mod tests {
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
                 desinfection_day_of_week: Weekday::Sun,
             },
-            vec![
+            &vec![
                 SpotPrice {
                     id: None,
                     source: None,

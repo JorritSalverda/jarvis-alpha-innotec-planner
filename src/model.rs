@@ -48,6 +48,7 @@ pub struct ItemValue {
 #[serde(rename_all = "camelCase")]
 pub struct State {
     pub desinfection_enabled: bool,
+    pub desinfection_finished_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
