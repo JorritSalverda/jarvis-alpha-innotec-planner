@@ -1,13 +1,27 @@
-use chrono::prelude::*;
+use chrono::{prelude::*, Weekday};
+use chrono_tz::Tz;
 use jarvis_lib::config_client::SetDefaults;
+use jarvis_lib::model::TimeSlot;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::error::Error;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub local_time_zone: String,
     pub heatpump_time_zone: String,
-    pub desinfection_day_of_week: Weekday,
+    pub desinfection_local_time_slots: HashMap<Weekday, Vec<TimeSlot>>,
+}
+
+impl Config {
+    pub fn get_local_time_zone(&self) -> Result<Tz, Box<dyn Error>> {
+        Ok(self.local_time_zone.parse::<Tz>()?)
+    }
+
+    pub fn get_heatpump_time_zone(&self) -> Result<Tz, Box<dyn Error>> {
+        Ok(self.heatpump_time_zone.parse::<Tz>()?)
+    }
 }
 
 impl SetDefaults for Config {
@@ -117,6 +131,6 @@ mod tests {
 
         assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
         assert_eq!(config.heatpump_time_zone, "Europe/Amsterdam".to_string());
-        assert_eq!(config.desinfection_day_of_week, Weekday::Sun);
+        assert_eq!(config.desinfection_local_time_slots[&Weekday::Sun].len(), 1);
     }
 }

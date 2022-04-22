@@ -50,7 +50,10 @@ config:
     sessionDurationInSeconds: 7200
     localTimeZone: Europe/Amsterdam
     heatpumpTimeZone: UTC
-    desinfectionDayOfWeek: Sun
+    desinfectionLocalTimeSlots:
+      Sun:
+        - from: 7:00:00
+          till: 0:00:00
 
 logLevel: info
 

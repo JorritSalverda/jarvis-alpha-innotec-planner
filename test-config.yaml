@@ -1,3 +1,6 @@
 localTimeZone: Europe/Amsterdam
 heatpumpTimeZone: Europe/Amsterdam
-desinfectionDayOfWeek: Sun
+desinfectionLocalTimeSlots:
+  Sun:
+    - from: 7:00:00
+      till: 19:00:00

@@ -1,13 +1,16 @@
 use crate::model::{Config, Content, State};
 use crate::state_client::StateClient;
+
 use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
 use chrono_tz::Tz;
+use jarvis_lib::model::TimeSlot;
 use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
 use quick_xml::de::from_str;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use websocket::client::ClientBuilder;
@@ -97,14 +100,11 @@ impl PlannerClient<Config> for WebsocketClient {
                 best_spot_prices
             );
 
-            let desinfection_desired = best_spot_prices
-                .first()
-                .unwrap()
-                .from
-                .with_timezone(&config.local_time_zone.parse::<Tz>()?)
-                .weekday()
-                == config.desinfection_day_of_week
-                && desinfection_finished_at < now;
+            let desinfection_desired = are_spot_prices_in_time_slot(
+                config.get_local_time_zone()?,
+                &best_spot_prices,
+                &config.desinfection_local_time_slots,
+            )? && desinfection_finished_at < now;
 
             let connection = ClientBuilder::new(&format!(
                 "ws://{}:{}",
@@ -387,7 +387,7 @@ impl WebsocketClient {
 
         // get start time from first spot price
         if !best_spot_prices.is_empty() && content.item.item.len() > 1 {
-            let heatpump_time_zone = config.heatpump_time_zone.parse::<Tz>()?;
+            let heatpump_time_zone = config.get_heatpump_time_zone()?;
 
             let from_hour = best_spot_prices
                 .first()
@@ -429,6 +429,48 @@ impl WebsocketClient {
 
         Ok(())
     }
+}
+
+fn are_spot_prices_in_time_slot(
+    local_time_zone: Tz,
+    spot_prices: &[SpotPrice],
+    local_time_slots: &HashMap<Weekday, Vec<TimeSlot>>,
+) -> Result<bool, Box<dyn Error>> {
+    Ok(spot_prices.iter().all(|spot_price| {
+        let local_from = spot_price.from.with_timezone(&local_time_zone);
+        let local_till = spot_price.till.with_timezone(&local_time_zone);
+
+        if let Some(time_slots) = local_time_slots.get(&local_from.weekday()) {
+            time_slots.iter().any(|time_slot| {
+                let time_slot_from = local_from.date().and_hms(
+                    time_slot.from.hour(),
+                    time_slot.from.minute(),
+                    time_slot.from.second(),
+                );
+
+                let time_slot_till = if time_slot.till.hour() > 0 {
+                    local_from.date().and_hms(
+                        time_slot.till.hour(),
+                        time_slot.till.minute(),
+                        time_slot.till.second(),
+                    )
+                } else {
+                    local_from.date().and_hms(
+                        time_slot.till.hour(),
+                        time_slot.till.minute(),
+                        time_slot.till.second(),
+                    ) + Duration::days(1)
+                };
+
+                local_from >= time_slot_from
+                    && local_from < time_slot_till
+                    && local_till > time_slot_from
+                    && local_till <= time_slot_till
+            })
+        } else {
+            false
+        }
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -620,7 +662,7 @@ mod tests {
             Config {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
-                desinfection_day_of_week: Weekday::Sun,
+                desinfection_local_time_slots: HashMap::new(),
             },
             &vec![
                 SpotPrice {
