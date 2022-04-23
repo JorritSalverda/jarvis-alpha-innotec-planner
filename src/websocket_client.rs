@@ -73,6 +73,8 @@ impl PlannerClient<Config> for WebsocketClient {
             None
         };
 
+        debug!("state: {:?}", state);
+
         let current_desinfection_enabled = match &state {
             Some(st) => st.desinfection_enabled,
             None => false,
@@ -99,13 +101,6 @@ impl PlannerClient<Config> for WebsocketClient {
                 best_spot_prices
             );
 
-            let desinfection_desired = are_spot_prices_in_time_slot(
-                config.get_local_time_zone()?,
-                &best_spot_prices,
-                &config.desinfection_local_time_slots,
-            )? && desinfection_finished_at
-                < now - Duration::days(config.minimal_days_between_desinfection as i64);
-
             let connection = ClientBuilder::new(&format!(
                 "ws://{}:{}",
                 self.config.host_address, self.config.host_port
@@ -122,20 +117,39 @@ impl PlannerClient<Config> for WebsocketClient {
                 &mut receiver,
                 &mut sender,
                 &navigation,
-                config,
+                &config,
                 &best_spot_prices,
             )?;
+
+            let desinfection_desired = are_spot_prices_in_time_slot(
+                config.get_local_time_zone()?,
+                &best_spot_prices,
+                &config.desinfection_local_time_slots,
+            )? && desinfection_finished_at
+                < now - Duration::days(config.minimal_days_between_desinfection as i64);
+
+            debug!("desinfection_finished_at: {}", desinfection_finished_at);
+            debug!("desinfection_desired: {}", desinfection_desired);
+            debug!(
+                "current_desinfection_enabled: {}",
+                current_desinfection_enabled
+            );
 
             if desinfection_desired != current_desinfection_enabled {
                 // toggle continuous desinfection program
                 self.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
             }
 
+            let mut desinfection_finished_at = desinfection_finished_at;
+            if desinfection_desired {
+                desinfection_finished_at = best_spot_prices.last().unwrap().till;
+            }
+
             if let Some(state_client) = &self.config.state_client {
                 state_client
                     .store_state(&State {
                         desinfection_enabled: desinfection_desired,
-                        desinfection_finished_at: Some(best_spot_prices.last().unwrap().till),
+                        desinfection_finished_at: Some(desinfection_finished_at),
                     })
                     .await?;
             }
@@ -364,7 +378,7 @@ impl WebsocketClient {
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
         navigation: &Navigation,
-        config: Config,
+        config: &Config,
         best_spot_prices: &[SpotPrice],
     ) -> Result<(), Box<dyn Error>> {
         let response_message = self.navigate_to(
@@ -436,6 +450,11 @@ fn are_spot_prices_in_time_slot(
     spot_prices: &[SpotPrice],
     local_time_slots: &HashMap<Weekday, Vec<TimeSlot>>,
 ) -> Result<bool, Box<dyn Error>> {
+    info!("Checking if spot prices are in time slots");
+    debug!("local_time_zone: {:?}", local_time_zone);
+    debug!("spot_prices: {:?}", spot_prices);
+    debug!("local_time_slots: {:?}", local_time_slots);
+
     Ok(spot_prices.iter().all(|spot_price| {
         let local_from = spot_price.from.with_timezone(&local_time_zone);
         let local_till = spot_price.till.with_timezone(&local_time_zone);
@@ -665,7 +684,7 @@ mod tests {
             &mut receiver,
             &mut sender,
             &navigation,
-            Config {
+            &Config {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
                 desinfection_local_time_slots: HashMap::new(),
