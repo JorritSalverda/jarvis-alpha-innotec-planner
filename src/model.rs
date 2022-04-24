@@ -11,6 +11,7 @@ pub struct Config {
     pub local_time_zone: String,
     pub heatpump_time_zone: String,
     pub maximum_hours_to_plan_ahead: u32,
+    pub desired_tap_water_temperature: f64,
     pub minimal_days_between_desinfection: u32,
     pub desinfection_local_time_slots: HashMap<Weekday, Vec<TimeSlot>>,
 }
@@ -141,6 +142,7 @@ mod tests {
         assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
         assert_eq!(config.heatpump_time_zone, "Europe/Amsterdam".to_string());
         assert_eq!(config.maximum_hours_to_plan_ahead, 12);
+        assert_eq!(config.desired_tap_water_temperature, 50.0);
         assert_eq!(config.minimal_days_between_desinfection, 4);
         assert_eq!(
             config.desinfection_local_time_slots[&Weekday::Fri][0]

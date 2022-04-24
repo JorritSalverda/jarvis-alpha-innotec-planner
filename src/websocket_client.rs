@@ -1,6 +1,5 @@
 use crate::model::{Config, Content, State, TimeSlot};
 use crate::state_client::StateClient;
-
 use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
 use chrono_tz::Tz;
@@ -8,12 +7,15 @@ use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
 use quick_xml::de::from_str;
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use websocket::client::ClientBuilder;
 use websocket::OwnedMessage;
+
+const MAXIMUM_TAP_WATER_TEMPERATURE: f64 = 58.0;
 
 pub struct WebsocketClientConfig {
     host_address: String,
@@ -140,6 +142,19 @@ impl PlannerClient<Config> for WebsocketClient {
                 self.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
             }
 
+            let desired_tap_water_temperature = if desinfection_desired {
+                MAXIMUM_TAP_WATER_TEMPERATURE
+            } else {
+                config.desired_tap_water_temperature
+            };
+
+            self.set_tap_water_temperature(
+                &mut receiver,
+                &mut sender,
+                &navigation,
+                desired_tap_water_temperature,
+            )?;
+
             let mut desinfection_finished_at = desinfection_finished_at;
             if desinfection_desired {
                 desinfection_finished_at = best_spot_prices.last().unwrap().till;
@@ -167,47 +182,6 @@ impl WebsocketClient {
         Self { config }
     }
 
-    fn send(
-        &self,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-        message: websocket::OwnedMessage,
-    ) -> Result<(), Box<dyn Error>> {
-        let _ = sender.send_message(&message)?;
-
-        Ok(())
-    }
-
-    fn send_and_await(
-        &self,
-        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-        message: websocket::OwnedMessage,
-    ) -> Result<String, Box<dyn Error>> {
-        let _ = sender.send_message(&message)?;
-
-        for message in receiver.incoming_messages() {
-            match message? {
-                OwnedMessage::Text(text) => {
-                    return Ok(text);
-                }
-                OwnedMessage::Close(_) => {
-                    // return a close
-                    sender.send_message(&OwnedMessage::Close(None))?;
-                }
-                OwnedMessage::Ping(data) => {
-                    // return a pong
-                    sender.send_message(&OwnedMessage::Pong(data))?;
-                }
-                OwnedMessage::Pong(_) => {}
-                OwnedMessage::Binary(_) => {}
-            }
-        }
-
-        Err(Box::<dyn Error>::from(
-            "No response received for login message",
-        ))
-    }
-
     fn login(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
@@ -222,73 +196,6 @@ impl WebsocketClient {
         let navigation = self.get_navigation_from_response(response_message)?;
 
         Ok(navigation)
-    }
-
-    fn get_navigation_from_response(
-        &self,
-        response_message: String,
-    ) -> Result<Navigation, Box<dyn Error>> {
-        let navigation: Navigation = from_str(&response_message)?;
-
-        Ok(navigation)
-    }
-
-    fn move_right(
-        &self,
-        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-    ) -> Result<(), Box<dyn Error>> {
-        debug!("Move right/down");
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;0".to_string()),
-        )?;
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;6".to_string()),
-        )?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn move_left(
-        &self,
-        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-    ) -> Result<(), Box<dyn Error>> {
-        debug!("Move left/up");
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;1".to_string()),
-        )?;
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;6".to_string()),
-        )?;
-        Ok(())
-    }
-
-    fn click(
-        &self,
-        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
-        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
-    ) -> Result<(), Box<dyn Error>> {
-        debug!("Click");
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;2".to_string()),
-        )?;
-        self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text("MOVE;6".to_string()),
-        )?;
-        Ok(())
     }
 
     fn toggle_continuous_desinfection(
@@ -354,23 +261,89 @@ impl WebsocketClient {
         Ok(())
     }
 
-    fn navigate_to(
+    fn set_tap_water_temperature(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
         navigation: &Navigation,
-        nav: &str,
-    ) -> Result<String, Box<dyn Error>> {
-        debug!("Navigate to '{}'", nav);
-        let navigation_id = navigation.get_navigation_item_id(nav)?;
-        let response_message = self.send_and_await(
-            receiver,
-            sender,
-            websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
-        )?;
-        debug!("Retrieved response from '{}':\n{}", &nav, response_message);
+        desired_tap_water_temperature: f64,
+    ) -> Result<(), Box<dyn Error>> {
+        // get current set tap water temperature
+        let response_message =
+            self.navigate_to(receiver, sender, navigation, "Informatie > Temperaturen")?;
 
-        Ok(response_message)
+        let value = self.get_item_from_response("Tapwater ingesteld", &response_message)?;
+        if value != desired_tap_water_temperature {
+            info!("To Afstandbediening");
+            self.navigate_to(receiver, sender, navigation, "Afstandbediening")?;
+
+            // to menu
+            info!("To menu");
+            self.click(receiver, sender)?;
+
+            // to warmwater
+            info!("To warmwater");
+            self.move_right(receiver, sender)?;
+            self.move_right(receiver, sender)?;
+            self.move_right(receiver, sender)?;
+            self.click(receiver, sender)?;
+
+            // to temperatuur
+            info!("To temperatuur");
+            self.move_right(receiver, sender)?;
+            self.click(receiver, sender)?;
+
+            // to gewenste waarde
+            info!("To gewenste waarde");
+            self.click(receiver, sender)?;
+
+            // raise / lower temperature
+            let desired_tap_water_temperature_diff = desired_tap_water_temperature - value;
+            if desired_tap_water_temperature_diff > 0.0 {
+                let temperature_increments = (desired_tap_water_temperature_diff / 0.5) as i64;
+                info!(
+                    "Raising temperature by {} increments of 0.5°C",
+                    temperature_increments
+                );
+                for _n in 0..temperature_increments {
+                    self.move_right(receiver, sender)?;
+                }
+                self.click(receiver, sender)?;
+            } else {
+                let temperature_decrements =
+                    (-1.0 * desired_tap_water_temperature_diff / 0.5) as i64;
+                info!(
+                    "Lowering temperature by {} decrements of 0.5°C",
+                    temperature_decrements
+                );
+                for _n in 0..temperature_decrements {
+                    self.move_left(receiver, sender)?;
+                }
+                self.click(receiver, sender)?;
+            }
+
+            // apply
+            info!("Apply changes");
+            self.click(receiver, sender)?;
+
+            // back to home
+            info!("To home");
+            self.click(receiver, sender)?;
+            self.click(receiver, sender)?;
+            self.click(receiver, sender)?;
+
+            info!(
+                "Finished updating tap water temperature to {}°C",
+                desired_tap_water_temperature
+            )
+        } else {
+            info!(
+                "Set tap water temperature is already at {}°C, no need to update it",
+                value
+            )
+        }
+
+        Ok(())
     }
 
     fn set_schedule_from_best_spot_prices(
@@ -442,6 +415,173 @@ impl WebsocketClient {
         self.send(sender, websocket::OwnedMessage::Text("SAVE;1".to_string()))?;
 
         Ok(())
+    }
+
+    fn navigate_to(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        navigation: &Navigation,
+        nav: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        debug!("Navigate to '{}'", nav);
+        let navigation_id = navigation.get_navigation_item_id(nav)?;
+        let response_message = self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
+        )?;
+        debug!("Retrieved response from '{}':\n{}", &nav, response_message);
+
+        Ok(response_message)
+    }
+
+    fn get_navigation_from_response(
+        &self,
+        response_message: String,
+    ) -> Result<Navigation, Box<dyn Error>> {
+        let navigation: Navigation = from_str(&response_message)?;
+
+        Ok(navigation)
+    }
+
+    fn move_right(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        debug!("Move right/down");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;0".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn move_left(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        debug!("Move left/up");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;1".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
+        Ok(())
+    }
+
+    fn click(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+    ) -> Result<(), Box<dyn Error>> {
+        debug!("Click");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;2".to_string()),
+        )?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("MOVE;6".to_string()),
+        )?;
+        Ok(())
+    }
+
+    fn get_item_from_response(
+        &self,
+        item: &str,
+        response_message: &str,
+    ) -> Result<f64, Box<dyn Error>> {
+        // <Content><item id='0x4816ac'><name>Aanvoer</name><value>22.0°C</value></item><item id='0x44fdcc'><name>Retour</name><value>22.0°C</value></item><item id='0x4807dc'><name>Retour berekend</name><value>23.0°C</value></item><item id='0x45e1bc'><name>Heetgas</name><value>38.0°C</value></item><item id='0x448894'><name>Buitentemperatuur</name><value>11.6°C</value></item><item id='0x48047c'><name>Gemiddelde temp.</name><value>13.1°C</value></item><item id='0x457724'><name>Tapwater gemeten</name><value>54.2°C</value></item><item id='0x45e97c'><name>Tapwater ingesteld</name><value>57.0°C</value></item><item id='0x45a41c'><name>Bron-in</name><value>10.5°C</value></item><item id='0x480204'><name>Bron-uit</name><value>10.3°C</value></item><item id='0x4803cc'><name>Menggroep2-aanvoer</name><value>22.0°C</value></item><item id='0x4609cc'><name>Menggr2-aanv.ingest.</name><value>19.0°C</value></item><item id='0x45a514'><name>Zonnecollector</name><value>5.0°C</value></item><item id='0x461ecc'><name>Zonneboiler</name><value>150.0°C</value></item><item id='0x4817a4'><name>Externe energiebron</name><value>5.0°C</value></item><item id='0x4646b4'><name>Aanvoer max.</name><value>66.0°C</value></item><item id='0x45e76c'><name>Zuiggasleiding comp.</name><value>19.4°C</value></item><item id='0x4607d4'><name>Comp. verwarming</name><value>37.7°C</value></item><item id='0x43e60c'><name>Oververhitting</name><value>4.8 K</value></item><name>Temperaturen</name></Content>
+
+        let re = Regex::new(&format!(
+            r"<item id='[^']*'><name>{}</name><value>(-?[0-9.]+|---)[^<]*</value></item>",
+            item
+        ))?;
+        let matches = match re.captures(response_message) {
+            Some(m) => m,
+            None => {
+                return Err(Box::<dyn Error>::from(format!(
+                    "No match for item {}",
+                    item
+                )));
+            }
+        };
+
+        if matches.len() != 2 {
+            return Err(Box::<dyn Error>::from(format!(
+                "No match for item {}",
+                item
+            )));
+        }
+
+        return match matches.get(1) {
+            None => Ok(0.0),
+            Some(m) => {
+                let value = m.as_str();
+                if value == "---" {
+                    return Ok(0.0);
+                }
+                Ok(value.parse()?)
+            }
+        };
+    }
+
+    fn send(
+        &self,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        message: websocket::OwnedMessage,
+    ) -> Result<(), Box<dyn Error>> {
+        let _ = sender.send_message(&message)?;
+
+        Ok(())
+    }
+
+    fn send_and_await(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        message: websocket::OwnedMessage,
+    ) -> Result<String, Box<dyn Error>> {
+        let _ = sender.send_message(&message)?;
+
+        for message in receiver.incoming_messages() {
+            match message? {
+                OwnedMessage::Text(text) => {
+                    return Ok(text);
+                }
+                OwnedMessage::Close(_) => {
+                    // return a close
+                    sender.send_message(&OwnedMessage::Close(None))?;
+                }
+                OwnedMessage::Ping(data) => {
+                    // return a pong
+                    sender.send_message(&OwnedMessage::Pong(data))?;
+                }
+                OwnedMessage::Pong(_) => {}
+                OwnedMessage::Binary(_) => {}
+            }
+        }
+
+        Err(Box::<dyn Error>::from(
+            "No response received for login message",
+        ))
     }
 }
 
@@ -688,6 +828,7 @@ mod tests {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
                 desinfection_local_time_slots: HashMap::new(),
+                desired_tap_water_temperature: 50.0,
                 maximum_hours_to_plan_ahead: 12,
                 minimal_days_between_desinfection: 4,
             },
@@ -714,6 +855,26 @@ mod tests {
                 },
             ],
         )?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn set_tap_water_temperature() -> Result<(), Box<dyn Error>> {
+        let websocket_host_ip = env::var("WEBSOCKET_HOST_IP")?;
+        let client = WebsocketClient::new(WebsocketClientConfig::from_env(None)?);
+
+        let connection = ClientBuilder::new(&format!("ws://{}:{}", websocket_host_ip, 8214))?
+            .origin(format!("http://{}", websocket_host_ip))
+            .add_protocol("Lux_WS")
+            .connect_insecure()?;
+
+        let (mut receiver, mut sender) = connection.split()?;
+
+        let navigation = client.login(&mut receiver, &mut sender)?;
+
+        client.set_tap_water_temperature(&mut receiver, &mut sender, &navigation, 50.0)?;
 
         Ok(())
     }

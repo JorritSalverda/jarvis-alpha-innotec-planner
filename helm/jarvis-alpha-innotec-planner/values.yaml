@@ -51,6 +51,7 @@ config:
     localTimeZone: Europe/Amsterdam
     heatpumpTimeZone: UTC
     maximumHoursToPlanAhead: 12
+    desiredTapWaterTemperature: 50.0
     minimalDaysBetweenDesinfection: 4
     desinfectionLocalTimeSlots:
       Fri:

@@ -1,6 +1,7 @@
 localTimeZone: Europe/Amsterdam
 heatpumpTimeZone: Europe/Amsterdam
 maximumHoursToPlanAhead: 12
+desiredTapWaterTemperature: 50.0
 minimalDaysBetweenDesinfection: 4
 desinfectionLocalTimeSlots:
   Fri:
