@@ -192,6 +192,7 @@ impl WebsocketClient {
             sender,
             websocket::OwnedMessage::Text(format!("LOGIN;{}", self.config.login_code)),
         )?;
+        debug!("Retrieved response for login:\n{}", response_message);
 
         let navigation = self.get_navigation_from_response(response_message)?;
 
@@ -431,7 +432,7 @@ impl WebsocketClient {
             sender,
             websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
         )?;
-        debug!("Retrieved response from '{}':\n{}", &nav, response_message);
+        debug!("Retrieved response from '{}' ({}):\n{}", &nav, navigation_id, response_message);
 
         Ok(response_message)
     }
