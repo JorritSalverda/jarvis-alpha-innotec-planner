@@ -413,7 +413,11 @@ impl WebsocketClient {
         }
 
         debug!("Saving changes");
-        self.send(sender, websocket::OwnedMessage::Text("SAVE;1".to_string()))?;
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("SAVE;1".to_string()),
+        )?;
 
         Ok(())
     }
@@ -432,7 +436,10 @@ impl WebsocketClient {
             sender,
             websocket::OwnedMessage::Text(format!("GET;{}", navigation_id)),
         )?;
-        debug!("Retrieved response from '{}' ({}):\n{}", &nav, navigation_id, response_message);
+        debug!(
+            "Retrieved response from '{}' ({}):\n{}",
+            &nav, navigation_id, response_message
+        );
 
         Ok(response_message)
     }
@@ -465,7 +472,6 @@ impl WebsocketClient {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn move_left(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
