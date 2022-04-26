@@ -373,43 +373,65 @@ impl WebsocketClient {
             )?;
         }
 
-        // get start time from first spot price
         if !best_spot_prices.is_empty() && content.item.item.len() > 1 {
             let heatpump_time_zone = config.get_heatpump_time_zone()?;
 
+            // get start time from first spot price
             let from_hour = best_spot_prices
                 .first()
                 .unwrap()
                 .from
                 .with_timezone(&heatpump_time_zone)
                 .hour();
-            let first_item_id = content.item.item.first().unwrap().id.clone();
-            debug!("Setting 1) to 00:00 - {}:00", from_hour);
-            self.send(
-                sender,
-                websocket::OwnedMessage::Text(format!(
-                    "SET;set_{};{}",
-                    first_item_id,
-                    65536 * 60 * from_hour
-                )),
-            )?;
 
+            // get finish time from last spot price
             let till_hour = best_spot_prices
                 .last()
                 .unwrap()
                 .till
                 .with_timezone(&heatpump_time_zone)
                 .hour();
-            let last_item_id = content.item.item.last().unwrap().id.clone();
-            debug!("Setting 5) to {}:00 - 00:00", till_hour);
-            self.send(
-                sender,
-                websocket::OwnedMessage::Text(format!(
-                    "SET;set_{};{}",
-                    last_item_id,
-                    60 * till_hour
-                )),
-            )?;
+
+            if from_hour > till_hour {
+                // starts before midnight, finishes after
+                let first_item_id = content.item.item.first().unwrap().id.clone();
+                debug!("Setting 1) to block {}:00 - {}:00", till_hour, from_hour);
+                self.send(
+                    sender,
+                    websocket::OwnedMessage::Text(format!(
+                        "SET;set_{};{}",
+                        first_item_id,
+                        65536 * 60 * till_hour + 60 * from_hour
+                    )),
+                )?;
+            } else {
+                // start and finish on same day
+                if from_hour > 0 {
+                    let first_item_id = content.item.item.first().unwrap().id.clone();
+                    debug!("Setting 1) to block 00:00 - {}:00", from_hour);
+                    self.send(
+                        sender,
+                        websocket::OwnedMessage::Text(format!(
+                            "SET;set_{};{}",
+                            first_item_id,
+                            65536 * 60 * from_hour
+                        )),
+                    )?;
+                }
+
+                if till_hour > 0 {
+                    let last_item_id = content.item.item.last().unwrap().id.clone();
+                    debug!("Setting 5) to block {}:00 - 00:00", till_hour);
+                    self.send(
+                        sender,
+                        websocket::OwnedMessage::Text(format!(
+                            "SET;set_{};{}",
+                            last_item_id,
+                            60 * till_hour
+                        )),
+                    )?;
+                }
+            }
         }
 
         debug!("Saving changes");
