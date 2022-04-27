@@ -123,6 +123,7 @@ impl PlannerClient<Config> for WebsocketClient {
                 &best_spot_prices,
             )?;
 
+            info!("Checking if desinfection is needed");
             let desinfection_desired = are_spot_prices_in_time_slot(
                 config.get_local_time_zone()?,
                 &best_spot_prices,
@@ -130,16 +131,16 @@ impl PlannerClient<Config> for WebsocketClient {
             )? && desinfection_finished_at
                 < now - Duration::days(config.minimal_days_between_desinfection as i64);
 
-            debug!("desinfection_finished_at: {}", desinfection_finished_at);
-            debug!("desinfection_desired: {}", desinfection_desired);
-            debug!(
-                "current_desinfection_enabled: {}",
-                current_desinfection_enabled
-            );
-
-            if desinfection_desired != current_desinfection_enabled {
-                // toggle continuous desinfection program
+            if desinfection_desired && !current_desinfection_enabled {
+                info!("Enabling desinfection mode");
                 self.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
+            } else if !desinfection_desired && current_desinfection_enabled {
+                info!("Disabling desinfection mode");
+                self.toggle_continuous_desinfection(&mut receiver, &mut sender, &navigation)?;
+            } else if desinfection_desired {
+                info!("No need to update desinfection mode, it's already enabled");
+            } else {
+                info!("No need to update desinfection mode, it's already disabled");
             }
 
             let desired_tap_water_temperature = if desinfection_desired {
@@ -182,6 +183,10 @@ impl WebsocketClient {
         Self { config }
     }
 
+    pub fn from_env(state_client: Option<StateClient>) -> Result<Self, Box<dyn Error>> {
+        Ok(Self::new(WebsocketClientConfig::from_env(state_client)?))
+    }
+
     fn login(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
@@ -207,22 +212,22 @@ impl WebsocketClient {
     ) -> Result<(), Box<dyn Error>> {
         info!("Toggling continuous desinfection");
 
-        info!("To Afstandbediening");
+        debug!("To Afstandbediening");
         self.navigate_to(receiver, sender, navigation, "Afstandbediening")?;
 
         // to menu
-        info!("To menu");
+        debug!("To menu");
         self.click(receiver, sender)?;
 
         // to warmwater
-        info!("To warmwater");
+        debug!("To warmwater");
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
         self.click(receiver, sender)?;
 
         // to onderhoudsprogramma
-        info!("To onderhoudsprogramma");
+        debug!("To onderhoudsprogramma");
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
@@ -230,11 +235,11 @@ impl WebsocketClient {
         self.click(receiver, sender)?;
 
         // to thermische desinfectie
-        info!("To thermische desinfectie");
+        debug!("To thermische desinfectie");
         self.click(receiver, sender)?;
 
         // to continu
-        info!("To continu");
+        debug!("To continu");
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
         self.move_right(receiver, sender)?;
@@ -244,16 +249,16 @@ impl WebsocketClient {
         self.move_right(receiver, sender)?;
 
         // check/uncheck continu
-        info!("Toggle continu checkbox");
+        debug!("Toggle continu checkbox");
         self.click(receiver, sender)?;
 
         // apply
-        info!("Apply changes");
+        debug!("Apply changes");
         self.move_right(receiver, sender)?;
         self.click(receiver, sender)?;
 
         // back to home
-        info!("To home");
+        debug!("To home");
         self.click(receiver, sender)?;
         self.click(receiver, sender)?;
         self.click(receiver, sender)?;
@@ -275,34 +280,34 @@ impl WebsocketClient {
 
         let value = self.get_item_from_response("Tapwater ingesteld", &response_message)?;
         if value != desired_tap_water_temperature {
-            info!("To Afstandbediening");
+            debug!("To Afstandbediening");
             self.navigate_to(receiver, sender, navigation, "Afstandbediening")?;
 
             // to menu
-            info!("To menu");
+            debug!("To menu");
             self.click(receiver, sender)?;
 
             // to warmwater
-            info!("To warmwater");
+            debug!("To warmwater");
             self.move_right(receiver, sender)?;
             self.move_right(receiver, sender)?;
             self.move_right(receiver, sender)?;
             self.click(receiver, sender)?;
 
             // to temperatuur
-            info!("To temperatuur");
+            debug!("To temperatuur");
             self.move_right(receiver, sender)?;
             self.click(receiver, sender)?;
 
             // to gewenste waarde
-            info!("To gewenste waarde");
+            debug!("To gewenste waarde");
             self.click(receiver, sender)?;
 
             // raise / lower temperature
             let desired_tap_water_temperature_diff = desired_tap_water_temperature - value;
             if desired_tap_water_temperature_diff > 0.0 {
                 let temperature_increments = (desired_tap_water_temperature_diff / 0.5) as i64;
-                info!(
+                debug!(
                     "Raising temperature by {} increments of 0.5°C",
                     temperature_increments
                 );
@@ -313,7 +318,7 @@ impl WebsocketClient {
             } else {
                 let temperature_decrements =
                     (-1.0 * desired_tap_water_temperature_diff / 0.5) as i64;
-                info!(
+                debug!(
                     "Lowering temperature by {} decrements of 0.5°C",
                     temperature_decrements
                 );
@@ -324,11 +329,11 @@ impl WebsocketClient {
             }
 
             // apply
-            info!("Apply changes");
+            debug!("Apply changes");
             self.click(receiver, sender)?;
 
             // back to home
-            info!("To home");
+            debug!("To home");
             self.click(receiver, sender)?;
             self.click(receiver, sender)?;
             self.click(receiver, sender)?;
@@ -355,6 +360,7 @@ impl WebsocketClient {
         config: &Config,
         best_spot_prices: &[SpotPrice],
     ) -> Result<(), Box<dyn Error>> {
+        info!("Updating tap water heating schedule from best spot prices");
         let response_message = self.navigate_to(
             receiver,
             sender,
@@ -365,6 +371,7 @@ impl WebsocketClient {
         debug!("Deserialized response:\n{:?}", content);
 
         // set all items to 0
+        info!("Resetting schedule");
         for item in &content.item.item {
             debug!("Setting {} to 00:00 - 00:00", item.name);
             self.send(
@@ -395,7 +402,7 @@ impl WebsocketClient {
             if from_hour > till_hour {
                 // starts before midnight, finishes after
                 let first_item_id = content.item.item.first().unwrap().id.clone();
-                debug!("Setting 1) to block {}:00 - {}:00", till_hour, from_hour);
+                info!("Setting 1) to block {}:00 - {}:00", till_hour, from_hour);
                 self.send(
                     sender,
                     websocket::OwnedMessage::Text(format!(
@@ -408,7 +415,7 @@ impl WebsocketClient {
                 // start and finish on same day
                 if from_hour > 0 {
                     let first_item_id = content.item.item.first().unwrap().id.clone();
-                    debug!("Setting 1) to block 00:00 - {}:00", from_hour);
+                    info!("Setting 1) to block 00:00 - {}:00", from_hour);
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
@@ -421,7 +428,7 @@ impl WebsocketClient {
 
                 if till_hour > 0 {
                     let last_item_id = content.item.item.last().unwrap().id.clone();
-                    debug!("Setting 5) to block {}:00 - 00:00", till_hour);
+                    info!("Setting 5) to block {}:00 - 00:00", till_hour);
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
@@ -434,7 +441,7 @@ impl WebsocketClient {
             }
         }
 
-        debug!("Saving changes");
+        info!("Saving changes");
         self.send_and_await(
             receiver,
             sender,

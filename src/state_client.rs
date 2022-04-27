@@ -1,10 +1,10 @@
 use crate::model::State;
-
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{
     api::{Api, PostParams},
     Client,
 };
+use log::debug;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -25,10 +25,11 @@ impl StateClientConfig {
         state_file_configmap_name: String,
         current_namespace: String,
     ) -> Result<Self, Box<dyn Error>> {
-        println!(
-            "StateClientConfig::new(state_file_path: {}, state_file_configmap_name: {}, current_namespace: {})",
-            state_file_path, state_file_configmap_name, current_namespace
+        debug!(
+          "StateClientConfig::new(state_file_path: {}, state_file_configmap_name: {}, current_namespace: {})",
+          state_file_path, state_file_configmap_name, current_namespace
         );
+
         Ok(Self {
             kube_client,
             state_file_path,
@@ -64,6 +65,10 @@ pub struct StateClient {
 impl StateClient {
     pub fn new(config: StateClientConfig) -> StateClient {
         StateClient { config }
+    }
+
+    pub async fn from_env() -> Result<Self, Box<dyn Error>> {
+        Ok(Self::new(StateClientConfig::from_env().await?))
     }
 
     pub fn read_state(&self) -> Result<Option<State>, Box<dyn std::error::Error>> {
