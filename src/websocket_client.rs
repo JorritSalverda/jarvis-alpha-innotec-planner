@@ -408,7 +408,7 @@ impl WebsocketClient {
                     websocket::OwnedMessage::Text(format!(
                         "SET;set_{};{}",
                         first_item_id,
-                        65536 * 60 * till_hour + 60 * from_hour
+                        60 * till_hour + 65536 * 60 * from_hour
                     )),
                 )?;
             } else {
