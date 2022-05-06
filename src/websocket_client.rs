@@ -167,6 +167,7 @@ impl PlannerClient<Config> for WebsocketClient {
                     .store_state(&State {
                         desinfection_enabled: desinfection_desired,
                         desinfection_finished_at: Some(desinfection_finished_at),
+                        planned_spot_prices: Some(best_spot_prices),
                     })
                     .await?;
             }

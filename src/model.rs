@@ -1,6 +1,7 @@
 use chrono::{prelude::*, Weekday};
 use chrono_tz::Tz;
 use jarvis_lib::config_client::SetDefaults;
+use jarvis_lib::model::SpotPrice;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
@@ -68,11 +69,12 @@ pub struct ItemValue {
     pub value: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
     pub desinfection_enabled: bool,
     pub desinfection_finished_at: Option<DateTime<Utc>>,
+    pub planned_spot_prices: Option<Vec<SpotPrice>>,
 }
 
 #[cfg(test)]
