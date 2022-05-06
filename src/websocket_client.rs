@@ -91,10 +91,11 @@ impl PlannerClient<Config> for WebsocketClient {
         };
 
         // get best time in next n hours
+        let after = now;
         let before = now + Duration::hours(config.maximum_hours_to_plan_ahead as i64);
 
         let best_spot_prices =
-            spot_price_planner.get_best_spot_prices(&spot_prices, None, Some(before))?;
+            spot_price_planner.get_best_spot_prices(&spot_prices, Some(after), Some(before))?;
 
         if !best_spot_prices.is_empty() {
             info!(
