@@ -629,6 +629,10 @@ fn is_desinfection_desired(
     all_spot_prices: &[SpotPrice],
     best_spot_prices: &[SpotPrice],
 ) -> Result<bool, Box<dyn Error>> {
+    if max_hours_since_last_desinfection <= min_hours_since_last_desinfection {
+        return Err(Box::<dyn Error>::from(format!("max_hours_since_last_desinfection ({}) is less or equal to min_hours_since_last_desinfection ({}) which is not allowed", max_hours_since_last_desinfection, min_hours_since_last_desinfection)));
+    }
+
     // make likelihood of desinfection when max of best spot prices < fraction of max of all spot prices
     // where fraction is an exponential curve between 5 and 10 days after previous round
     if best_spot_prices.is_empty() {
