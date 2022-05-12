@@ -36,5 +36,5 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[ctor::ctor]
 fn init() {
-  json_env_logger::init();
+    json_env_logger::init();
 }
