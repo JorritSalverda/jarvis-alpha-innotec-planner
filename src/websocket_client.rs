@@ -2,7 +2,9 @@ use crate::model::{Config, Content, State};
 use crate::state_client::StateClient;
 use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
-use jarvis_lib::model::{SpotPrice, SpotPricePlanner};
+use jarvis_lib::model::{
+    PlanningRequest, PlanningResponse, PlanningStrategy, SpotPrice, SpotPricePlanner,
+};
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
 use quick_xml::de::from_str;
@@ -88,12 +90,15 @@ impl PlannerClient<Config> for WebsocketClient {
             None => now - Duration::days(7),
         };
 
-        // get best time in next n hours
-        let after = now;
-        let before = now + Duration::hours(config.maximum_hours_to_plan_ahead as i64);
-
-        let best_spot_prices =
-            spot_price_planner.get_best_spot_prices(&spot_prices, Some(after), Some(before))?;
+        let (best_spot_prices_response, desinfection_desired) = self
+            .get_spot_prices_for_tapwater_heating_or_desinfection(
+                &config,
+                spot_price_planner,
+                spot_prices,
+                now,
+                desinfection_finished_at,
+            )?;
+        let best_spot_prices = best_spot_prices_response.spot_prices;
 
         if !best_spot_prices.is_empty() {
             info!(
@@ -122,14 +127,14 @@ impl PlannerClient<Config> for WebsocketClient {
                 &best_spot_prices,
             )?;
 
-            info!("Checking if desinfection is needed");
-            let desinfection_desired = is_desinfection_desired(
-                config.min_hours_since_last_desinfection,
-                config.max_hours_since_last_desinfection,
-                &desinfection_finished_at,
-                &spot_prices,
-                &best_spot_prices,
-            )?;
+            // info!("Checking if desinfection is needed");
+            // let desinfection_desired = is_desinfection_desired(
+            //     config.min_hours_since_last_desinfection,
+            //     config.max_hours_since_last_desinfection,
+            //     &desinfection_finished_at,
+            //     &spot_prices,
+            //     &best_spot_prices,
+            // )?;
 
             if desinfection_desired && !current_desinfection_enabled {
                 info!("Enabling desinfection mode");
@@ -620,14 +625,77 @@ impl WebsocketClient {
             "No response received for login message",
         ))
     }
+
+    fn get_spot_prices_for_tapwater_heating_or_desinfection(
+        &self,
+        config: &Config,
+        spot_price_planner: SpotPricePlanner,
+        spot_prices: Vec<SpotPrice>,
+        now: DateTime<Utc>,
+        desinfection_finished_at: DateTime<Utc>,
+    ) -> Result<(PlanningResponse, bool), Box<dyn Error>> {
+        let lowest_price_tapwater_heating_response =
+            spot_price_planner.get_best_spot_prices(&PlanningRequest {
+                spot_prices: spot_prices.clone(),
+                load_profile: config.load_profile.clone(),
+                planning_strategy: PlanningStrategy::LowestPrice,
+                after: Some(now),
+                before: Some(now + Duration::hours(12)),
+            })?;
+
+        let lowest_price_desinfection_response =
+            spot_price_planner.get_best_spot_prices(&PlanningRequest {
+                spot_prices: spot_prices.clone(),
+                load_profile: config.desinfection_load_profile.clone(),
+                planning_strategy: PlanningStrategy::LowestPrice,
+                after: Some(now),
+                before: Some(now + Duration::hours(24)),
+            })?;
+
+        // if lowest price desinfection spot prices start after next 12 hours we don't want desinfection to run now
+        if lowest_price_desinfection_response.spot_prices.is_empty()
+            || lowest_price_desinfection_response
+                .spot_prices
+                .first()
+                .unwrap()
+                .from
+                > now + Duration::hours(12)
+        {
+            Ok((lowest_price_tapwater_heating_response, false))
+        } else {
+            let highest_price_desinfection_response =
+                spot_price_planner.get_best_spot_prices(&PlanningRequest {
+                    spot_prices,
+                    load_profile: config.desinfection_load_profile.clone(),
+                    planning_strategy: PlanningStrategy::HighestPrice,
+                    after: Some(now),
+                    before: Some(now + Duration::hours(24)),
+                })?;
+
+            info!("Checking if desinfection is needed");
+            let desinfection_desired = is_desinfection_desired(
+                config.min_hours_since_last_desinfection,
+                config.max_hours_since_last_desinfection,
+                &desinfection_finished_at,
+                &lowest_price_desinfection_response,
+                &highest_price_desinfection_response,
+            )?;
+
+            if desinfection_desired {
+                Ok((lowest_price_desinfection_response, desinfection_desired))
+            } else {
+                Ok((lowest_price_tapwater_heating_response, false))
+            }
+        }
+    }
 }
 
 fn is_desinfection_desired(
     min_hours_since_last_desinfection: i64,
     max_hours_since_last_desinfection: i64,
     desinfection_finished_at: &DateTime<Utc>,
-    all_spot_prices: &[SpotPrice],
-    best_spot_prices: &[SpotPrice],
+    lowest_price_desinfection_response: &PlanningResponse,
+    highest_price_desinfection_response: &PlanningResponse,
 ) -> Result<bool, Box<dyn Error>> {
     if max_hours_since_last_desinfection <= min_hours_since_last_desinfection {
         return Err(Box::<dyn Error>::from(format!("max_hours_since_last_desinfection ({}) is less or equal to min_hours_since_last_desinfection ({}) which is not allowed", max_hours_since_last_desinfection, min_hours_since_last_desinfection)));
@@ -635,11 +703,15 @@ fn is_desinfection_desired(
 
     // make likelihood of desinfection when max of best spot prices < fraction of max of all spot prices
     // where fraction is an exponential curve between 5 and 10 days after previous round
-    if best_spot_prices.is_empty() {
+    if lowest_price_desinfection_response.spot_prices.is_empty() {
         info!("No best spot prices, desinfection is not desired");
         Ok(false)
     } else {
-        let planned_finished_at = best_spot_prices.last().unwrap().till;
+        let planned_finished_at = lowest_price_desinfection_response
+            .spot_prices
+            .last()
+            .unwrap()
+            .till;
         let hours_since_last_desinfection =
             (planned_finished_at - *desinfection_finished_at).num_hours();
 
@@ -663,20 +735,15 @@ fn is_desinfection_desired(
                 hours_since_min, hours_between_min_and_max, fraction_of_max_price
             );
 
-            let max_of_all_spot_prices = all_spot_prices
-                .iter()
-                .map(|s| s.market_price)
-                .fold(f64::NEG_INFINITY, f64::max);
-            let max_of_best_spot_prices = best_spot_prices
-                .iter()
-                .map(|s| s.market_price)
-                .fold(f64::NEG_INFINITY, f64::max);
+            let highest_total_price =
+                highest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
+            let lowest_total_price =
+                lowest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
 
-            let is_desired =
-                max_of_best_spot_prices < (fraction_of_max_price * max_of_all_spot_prices);
+            let is_desired = lowest_total_price < (fraction_of_max_price * highest_total_price);
             info!(
                 "is_desired = {} < ({} * {}) = {}",
-                max_of_best_spot_prices, fraction_of_max_price, max_of_all_spot_prices, is_desired
+                lowest_total_price, fraction_of_max_price, highest_total_price, is_desired
             );
 
             Ok(is_desired)
@@ -734,7 +801,7 @@ impl Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jarvis_lib::model::SpotPrice;
+    use jarvis_lib::model::{LoadProfile, LoadProfileSection, SpotPrice};
 
     #[test]
     fn deserialize_navigation_xml() {
@@ -873,12 +940,27 @@ mod tests {
             &Config {
                 local_time_zone: "Europe/Amsterdam".to_string(),
                 heatpump_time_zone: "Europe/Amsterdam".to_string(),
-                // desinfection_local_time_slots: HashMap::new(),
                 desired_tap_water_temperature: 50.0,
-                maximum_hours_to_plan_ahead: 12,
-                // minimal_days_between_desinfection: 4,
                 min_hours_since_last_desinfection: 96,
                 max_hours_since_last_desinfection: 240,
+                load_profile: LoadProfile {
+                    sections: vec![LoadProfileSection {
+                        duration_seconds: 7200,
+                        power_draw_watt: 2000.0,
+                    }],
+                },
+                desinfection_load_profile: LoadProfile {
+                    sections: vec![
+                        LoadProfileSection {
+                            duration_seconds: 7200,
+                            power_draw_watt: 2000.0,
+                        },
+                        LoadProfileSection {
+                            duration_seconds: 1800,
+                            power_draw_watt: 8000.0,
+                        },
+                    ],
+                },
             },
             &vec![
                 SpotPrice {
@@ -950,49 +1032,67 @@ mod tests {
     #[test]
     fn is_desinfection_desired_returns_false_when_best_spot_prices_is_empty(
     ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 7200,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
         let desinfection_finished_at = Utc.ymd(2022, 4, 30).and_hms(9, 37, 0);
-        let all_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                market_price: 0.33,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-        let best_spot_prices: Vec<SpotPrice> = vec![];
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    market_price: 0.33,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![],
+            load_profile: desinfection_load_profile,
+        };
 
         let desinfection_desired = is_desinfection_desired(
             min_hours_since_last_desinfection,
             max_hours_since_last_desinfection,
             &desinfection_finished_at,
-            &all_spot_prices,
-            &best_spot_prices,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
         )?;
 
         assert_eq!(desinfection_desired, false);
@@ -1003,70 +1103,89 @@ mod tests {
     #[test]
     fn is_desinfection_desired_returns_false_when_hours_since_last_desinfection_are_less_than_min_hours(
     ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 7200,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
+
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
         let desinfection_finished_at = Utc.ymd(2022, 5, 11).and_hms(9, 37, 0);
-        let all_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                market_price: 0.33,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-        let best_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    market_price: 0.33,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile,
+        };
 
         let desinfection_desired = is_desinfection_desired(
             min_hours_since_last_desinfection,
             max_hours_since_last_desinfection,
             &desinfection_finished_at,
-            &all_spot_prices,
-            &best_spot_prices,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
         )?;
 
         assert_eq!(desinfection_desired, false);
@@ -1077,70 +1196,89 @@ mod tests {
     #[test]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_are_greater_than_max_hours(
     ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 7200,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
+
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
         let desinfection_finished_at = Utc.ymd(2022, 4, 30).and_hms(9, 37, 0);
-        let all_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                market_price: 0.33,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-        let best_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    market_price: 0.33,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile,
+        };
 
         let desinfection_desired = is_desinfection_desired(
             min_hours_since_last_desinfection,
             max_hours_since_last_desinfection,
             &desinfection_finished_at,
-            &all_spot_prices,
-            &best_spot_prices,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
         )?;
 
         assert_eq!(desinfection_desired, true);
@@ -1151,79 +1289,99 @@ mod tests {
     #[test]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_between_min_and_max_hours_and_max_prices_of_best_spot_prices_is_less_than_calculated_percentage_of_max_of_all_spot_prices(
     ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 7200,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
+
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
         let desinfection_finished_at = Utc.ymd(2022, 5, 5).and_hms(9, 37, 0);
-        let all_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                market_price: 0.33,
-                market_price_tax: 0.06,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-        let best_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-
-        // Utc.ymd(2022, 5, 12).and_hms(16, 0, 0) - Utc.ymd(2022, 5, 5).and_hms(9, 37, 0) = 174 hours
-
-        // (174 - 96)^2 / (240 - 96)^2 = 78^2 / 144^2 = 0,293402777777778
-
-        // max best prices = 0.09
-        // max all prices = 0.33
-
-        // 0,293402777777778 * 0.33 = 0,096822916666667
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(18, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    market_price: 0.33,
+                    market_price_tax: 0.06,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    market_price: 0.28,
+                    market_price_tax: 0.05,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(21, 0, 0),
+                    market_price: 0.25,
+                    market_price_tax: 0.04,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    market_price: 0.06,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile,
+        };
 
         let desinfection_desired = is_desinfection_desired(
             min_hours_since_last_desinfection,
             max_hours_since_last_desinfection,
             &desinfection_finished_at,
-            &all_spot_prices,
-            &best_spot_prices,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
         )?;
 
         assert_eq!(desinfection_desired, true);
@@ -1234,79 +1392,99 @@ mod tests {
     #[test]
     fn is_desinfection_desired_returns_false_when_hours_since_last_desinfection_between_min_and_max_hours_and_max_prices_of_best_spot_prices_is_greater_than_or_equal_to_calculated_percentage_of_max_of_all_spot_prices(
     ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 7200,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
+
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
         let desinfection_finished_at = Utc.ymd(2022, 5, 6).and_hms(9, 37, 0);
-        let all_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                market_price: 0.33,
-                market_price_tax: 0.06,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-        let best_spot_prices = vec![
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                market_price: 0.08,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-            SpotPrice {
-                id: None,
-                source: None,
-                from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
-                market_price: 0.09,
-                market_price_tax: 0.02,
-                sourcing_markup_price: 0.017,
-                energy_tax_price: 0.08,
-            },
-        ];
-
-        // Utc.ymd(2022, 5, 12).and_hms(16, 0, 0) - Utc.ymd(2022, 5, 6).and_hms(9, 37, 0) = 150 hours
-
-        // (174 - 96)^2 / (240 - 96)^2 = 54^2 / 144^2 = 0,140625
-
-        // max best prices = 0.09
-        // max all prices = 0.33
-
-        // 0,140625 * 0.33 = 0,04640625
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(18, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    market_price: 0.33,
+                    market_price_tax: 0.06,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(21, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile,
+        };
 
         let desinfection_desired = is_desinfection_desired(
             min_hours_since_last_desinfection,
             max_hours_since_last_desinfection,
             &desinfection_finished_at,
-            &all_spot_prices,
-            &best_spot_prices,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
         )?;
 
         assert_eq!(desinfection_desired, false);

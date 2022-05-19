@@ -1,6 +1,7 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use jarvis_lib::config_client::SetDefaults;
+use jarvis_lib::model::LoadProfile;
 use jarvis_lib::model::SpotPrice;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -8,9 +9,10 @@ use std::error::Error;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
+    pub load_profile: LoadProfile,
+    pub desinfection_load_profile: LoadProfile,
     pub local_time_zone: String,
     pub heatpump_time_zone: String,
-    pub maximum_hours_to_plan_ahead: i64,
     pub desired_tap_water_temperature: f64,
     pub min_hours_since_last_desinfection: i64,
     pub max_hours_since_last_desinfection: i64,
@@ -138,7 +140,6 @@ mod tests {
 
         assert_eq!(config.local_time_zone, "Europe/Amsterdam".to_string());
         assert_eq!(config.heatpump_time_zone, "Europe/Amsterdam".to_string());
-        assert_eq!(config.maximum_hours_to_plan_ahead, 12);
         assert_eq!(config.desired_tap_water_temperature, 50.0);
         assert_eq!(config.min_hours_since_last_desinfection, 96);
         assert_eq!(config.max_hours_since_last_desinfection, 240);

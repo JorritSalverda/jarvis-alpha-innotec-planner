@@ -1,6 +1,15 @@
+loadProfile:
+  sections:
+    - durationSeconds: 7200
+      powerDrawWatt: 2000
+desinfectionLoadProfile:
+  sections:
+    - durationSeconds: 7200
+      powerDrawWatt: 2000
+    - durationSeconds: 1800
+      powerDrawWatt: 8000
 localTimeZone: Europe/Amsterdam
 heatpumpTimeZone: Europe/Amsterdam
-maximumHoursToPlanAhead: 12
 desiredTapWaterTemperature: 50.0
 minHoursSinceLastDesinfection: 96
 maxHoursSinceLastDesinfection: 240
