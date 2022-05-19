@@ -661,6 +661,7 @@ impl WebsocketClient {
                 .from
                 > now + Duration::hours(12)
         {
+            info!("Optimal spot prices for desinfection are more than 12 hours ahead, skip using those for now and will check again next run");
             Ok((lowest_price_tapwater_heating_response, false))
         } else {
             let highest_price_desinfection_response =
