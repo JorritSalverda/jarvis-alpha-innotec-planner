@@ -3,7 +3,8 @@ use crate::state_client::StateClient;
 use async_trait::async_trait;
 use chrono::{prelude::*, Duration, Utc};
 use jarvis_lib::model::{
-    PlanningRequest, PlanningResponse, PlanningStrategy, SpotPrice, SpotPricePlanner,
+    LoadProfile, LoadProfileSection, PlanningRequest, PlanningResponse, PlanningStrategy,
+    SpotPrice, SpotPricePlanner,
 };
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
@@ -93,8 +94,8 @@ impl PlannerClient<Config> for WebsocketClient {
         let (best_spot_prices_response, desinfection_desired) = self
             .get_spot_prices_for_tapwater_heating_or_desinfection(
                 &config,
-                spot_price_planner,
-                spot_prices,
+                &spot_price_planner,
+                &spot_prices,
                 now,
                 desinfection_finished_at,
             )?;
@@ -119,7 +120,7 @@ impl PlannerClient<Config> for WebsocketClient {
 
             let navigation = self.login(&mut receiver, &mut sender)?;
 
-            self.set_schedule_from_best_spot_prices(
+            self.set_tap_water_schedule_from_best_spot_prices(
                 &mut receiver,
                 &mut sender,
                 &navigation,
@@ -175,12 +176,50 @@ impl PlannerClient<Config> for WebsocketClient {
                     })
                     .await?;
             }
-
-            Ok(())
         } else {
             info!("No available best spot prices, not updating heatpump tap water schedule.");
-            Ok(())
         }
+
+        info!("Blocking worst time for heating for alpha innotec heatpump...");
+
+        let worst_spot_prices_response = self.get_worst_spot_prices_for_blocking_heating(
+            &spot_price_planner,
+            &spot_prices,
+            now,
+        )?;
+        let worst_spot_prices = worst_spot_prices_response.spot_prices;
+
+        if !worst_spot_prices.is_empty() {
+            info!(
+                "Found block of {} spot price slots to use for blocking heating:\n{:?}",
+                worst_spot_prices.len(),
+                worst_spot_prices
+            );
+
+            let connection = ClientBuilder::new(&format!(
+                "ws://{}:{}",
+                self.config.host_address, self.config.host_port
+            ))?
+            .origin(format!("http://{}", self.config.host_address))
+            .add_protocol("Lux_WS")
+            .connect_insecure()?;
+
+            let (mut receiver, mut sender) = connection.split()?;
+
+            let navigation = self.login(&mut receiver, &mut sender)?;
+
+            self.set_heating_schedule_from_worst_spot_prices(
+                &mut receiver,
+                &mut sender,
+                &navigation,
+                &config,
+                &worst_spot_prices,
+            )?;
+        } else {
+            info!("No available worst spot prices, not updating heatpump heating schedule.");
+        }
+
+        Ok(())
     }
 }
 
@@ -358,7 +397,7 @@ impl WebsocketClient {
         Ok(())
     }
 
-    fn set_schedule_from_best_spot_prices(
+    fn set_tap_water_schedule_from_best_spot_prices(
         &self,
         receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
@@ -444,6 +483,105 @@ impl WebsocketClient {
                         )),
                     )?;
                 }
+            }
+        }
+
+        info!("Saving changes");
+        self.send_and_await(
+            receiver,
+            sender,
+            websocket::OwnedMessage::Text("SAVE;1".to_string()),
+        )?;
+
+        Ok(())
+    }
+
+    fn set_heating_schedule_from_worst_spot_prices(
+        &self,
+        receiver: &mut websocket::receiver::Reader<std::net::TcpStream>,
+        sender: &mut websocket::sender::Writer<std::net::TcpStream>,
+        navigation: &Navigation,
+        config: &Config,
+        worst_spot_prices: &[SpotPrice],
+    ) -> Result<(), Box<dyn Error>> {
+        info!("Updating heating schedule to block worst spot prices");
+        let response_message = self.navigate_to(
+            receiver,
+            sender,
+            navigation,
+            "Klokprogramma > Verwarmen > Week",
+        )?;
+        let content: Content = from_str(&response_message).unwrap();
+        debug!("Deserialized response:\n{:?}", content);
+
+        // set all items to 0
+        info!("Resetting schedule");
+        for item in &content.item.item {
+            debug!("Setting {} to 00:00 - 00:00", item.name);
+            self.send(
+                sender,
+                websocket::OwnedMessage::Text(format!("SET;set_{};{}", item.id, 0)),
+            )?;
+        }
+
+        if !worst_spot_prices.is_empty() && content.item.item.len() > 1 {
+            let heatpump_time_zone = config.get_heatpump_time_zone()?;
+
+            // get start time from first spot price
+            let from_hour = worst_spot_prices
+                .first()
+                .unwrap()
+                .from
+                .with_timezone(&heatpump_time_zone)
+                .hour();
+
+            // get finish time from last spot price
+            let till_hour = worst_spot_prices
+                .last()
+                .unwrap()
+                .till
+                .with_timezone(&heatpump_time_zone)
+                .hour();
+
+            if from_hour > till_hour {
+                // starts before midnight, finishes after
+                if from_hour > 0 {
+                    let first_item_id = content.item.item.first().unwrap().id.clone();
+                    info!("Setting 1) to block {}:00 - 00:00", from_hour);
+                    self.send(
+                        sender,
+                        websocket::OwnedMessage::Text(format!(
+                            "SET;set_{};{}",
+                            first_item_id,
+                            60 * from_hour
+                        )),
+                    )?;
+                }
+
+                if till_hour > 0 {
+                    let last_item_id = content.item.item.last().unwrap().id.clone();
+                    info!("Setting 5) to block 00:00 - {}:00", till_hour);
+                    self.send(
+                        sender,
+                        websocket::OwnedMessage::Text(format!(
+                            "SET;set_{};{}",
+                            last_item_id,
+                            65536 * 60 * till_hour
+                        )),
+                    )?;
+                }
+            } else {
+                // start and finish on same day
+                let first_item_id = content.item.item.first().unwrap().id.clone();
+                info!("Setting 1) to block {}:00 - {}:00", from_hour, till_hour);
+                self.send(
+                    sender,
+                    websocket::OwnedMessage::Text(format!(
+                        "SET;set_{};{}",
+                        first_item_id,
+                        60 * from_hour + 65536 * 60 * till_hour
+                    )),
+                )?;
             }
         }
 
@@ -590,7 +728,7 @@ impl WebsocketClient {
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
         message: websocket::OwnedMessage,
     ) -> Result<(), Box<dyn Error>> {
-        let _ = sender.send_message(&message)?;
+        sender.send_message(&message)?;
 
         Ok(())
     }
@@ -601,7 +739,7 @@ impl WebsocketClient {
         sender: &mut websocket::sender::Writer<std::net::TcpStream>,
         message: websocket::OwnedMessage,
     ) -> Result<String, Box<dyn Error>> {
-        let _ = sender.send_message(&message)?;
+        sender.send_message(&message)?;
 
         for message in receiver.incoming_messages() {
             match message? {
@@ -629,14 +767,14 @@ impl WebsocketClient {
     fn get_spot_prices_for_tapwater_heating_or_desinfection(
         &self,
         config: &Config,
-        spot_price_planner: SpotPricePlanner,
-        spot_prices: Vec<SpotPrice>,
+        spot_price_planner: &SpotPricePlanner,
+        spot_prices: &[SpotPrice],
         now: DateTime<Utc>,
         desinfection_finished_at: DateTime<Utc>,
     ) -> Result<(PlanningResponse, bool), Box<dyn Error>> {
         let lowest_price_tapwater_heating_response =
             spot_price_planner.get_best_spot_prices(&PlanningRequest {
-                spot_prices: spot_prices.clone(),
+                spot_prices: spot_prices.to_owned(),
                 load_profile: config.load_profile.clone(),
                 planning_strategy: PlanningStrategy::LowestPrice,
                 after: Some(now),
@@ -645,7 +783,7 @@ impl WebsocketClient {
 
         let lowest_price_desinfection_response =
             spot_price_planner.get_best_spot_prices(&PlanningRequest {
-                spot_prices: spot_prices.clone(),
+                spot_prices: spot_prices.to_owned(),
                 load_profile: config.desinfection_load_profile.clone(),
                 planning_strategy: PlanningStrategy::LowestPrice,
                 after: Some(now),
@@ -666,7 +804,7 @@ impl WebsocketClient {
         } else {
             let highest_price_desinfection_response =
                 spot_price_planner.get_best_spot_prices(&PlanningRequest {
-                    spot_prices,
+                    spot_prices: spot_prices.to_owned(),
                     load_profile: config.desinfection_load_profile.clone(),
                     planning_strategy: PlanningStrategy::HighestPrice,
                     after: Some(now),
@@ -688,6 +826,29 @@ impl WebsocketClient {
                 Ok((lowest_price_tapwater_heating_response, false))
             }
         }
+    }
+
+    fn get_worst_spot_prices_for_blocking_heating(
+        &self,
+        spot_price_planner: &SpotPricePlanner,
+        spot_prices: &[SpotPrice],
+        now: DateTime<Utc>,
+    ) -> Result<PlanningResponse, Box<dyn Error>> {
+        let highest_price_desinfection_response =
+            spot_price_planner.get_best_spot_prices(&PlanningRequest {
+                spot_prices: spot_prices.to_owned(),
+                load_profile: LoadProfile {
+                    sections: vec![LoadProfileSection {
+                        duration_seconds: 3600,
+                        power_draw_watt: 1000.0,
+                    }],
+                },
+                planning_strategy: PlanningStrategy::HighestPrice,
+                after: Some(now),
+                before: Some(now + Duration::hours(12)),
+            })?;
+
+        Ok(highest_price_desinfection_response)
     }
 }
 
@@ -934,7 +1095,7 @@ mod tests {
 
         let navigation = client.login(&mut receiver, &mut sender)?;
 
-        client.set_schedule_from_best_spot_prices(
+        client.set_tap_water_schedule_from_best_spot_prices(
             &mut receiver,
             &mut sender,
             &navigation,

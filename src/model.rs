@@ -36,13 +36,13 @@ impl SetDefaults for Config {
     fn set_defaults(&mut self) {}
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename = "Content")]
 pub struct Content {
     pub item: ContentItem,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename = "item")]
 pub struct ContentItem {
     pub name: String,
@@ -50,7 +50,7 @@ pub struct ContentItem {
     pub item: Vec<Item>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename = "item")]
 pub struct Item {
     pub id: String,
@@ -60,7 +60,7 @@ pub struct Item {
     pub raw: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ItemValue {
     #[serde(rename = "$value")]
     pub value: String,
