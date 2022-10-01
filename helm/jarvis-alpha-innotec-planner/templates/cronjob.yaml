@@ -86,4 +86,4 @@ spec:
               name: {{ include "jarvis-alpha-innotec-planner.fullname" . }}
           - name: state
             configMap:
-              name: jarvis-spot-price-exporter
+              name: {{ .Values.config.spotPriceStateConfigMap }}

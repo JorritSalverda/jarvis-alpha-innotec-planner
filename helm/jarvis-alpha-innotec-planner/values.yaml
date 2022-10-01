@@ -10,6 +10,7 @@ cronjob:
   ttlSecondsAfterFinished: 3600
 
 config:
+  spotPriceStateConfigMap: jarvis-spot-price-exporter
   websocketHostIP: 127.0.0.1
   websocketHostPort: 8214
   websocketLoginCode: 999999
