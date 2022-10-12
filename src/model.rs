@@ -16,6 +16,7 @@ pub struct Config {
     pub desired_tap_water_temperature: f64,
     pub min_hours_since_last_desinfection: i64,
     pub max_hours_since_last_desinfection: i64,
+    pub jitter_max_minutes: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

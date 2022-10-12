@@ -1065,6 +1065,7 @@ dependencies = [
  "kube",
  "log 0.4.16",
  "quick-xml",
+ "rand 0.8.5",
  "regex",
  "serde",
  "serde_yaml",

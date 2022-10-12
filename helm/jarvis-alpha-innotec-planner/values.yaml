@@ -54,6 +54,7 @@ config:
     maximumHoursToPlanAhead: 12
     desiredTapWaterTemperature: 50.0
     minimalDaysBetweenDesinfection: 4
+    jitterMaxMinutes: 15
     desinfectionLocalTimeSlots:
       Fri:
         - from: 7:00:00

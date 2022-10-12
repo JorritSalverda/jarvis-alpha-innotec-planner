@@ -9,6 +9,7 @@ use jarvis_lib::model::{
 use jarvis_lib::planner_client::PlannerClient;
 use log::{debug, info};
 use quick_xml::de::from_str;
+use rand::Rng;
 use regex::Regex;
 use serde::Deserialize;
 use std::env;
@@ -120,6 +121,9 @@ impl PlannerClient<Config> for WebsocketClient {
 
             let navigation = self.login(&mut receiver, &mut sender)?;
 
+            // add some jitter to start time to prevent all alpha innotec planner controlled heat pumps to start at the exact same time
+            let best_spot_prices = Self::add_jitter_to_spot_prices(&config, &best_spot_prices);
+
             self.set_tap_water_schedule_from_best_spot_prices(
                 &mut receiver,
                 &mut sender,
@@ -127,15 +131,6 @@ impl PlannerClient<Config> for WebsocketClient {
                 &config,
                 &best_spot_prices,
             )?;
-
-            // info!("Checking if desinfection is needed");
-            // let desinfection_desired = is_desinfection_desired(
-            //     config.min_hours_since_last_desinfection,
-            //     config.max_hours_since_last_desinfection,
-            //     &desinfection_finished_at,
-            //     &spot_prices,
-            //     &best_spot_prices,
-            // )?;
 
             if desinfection_desired && !current_desinfection_enabled {
                 info!("Enabling desinfection mode");
@@ -207,6 +202,9 @@ impl PlannerClient<Config> for WebsocketClient {
             let (mut receiver, mut sender) = connection.split()?;
 
             let navigation = self.login(&mut receiver, &mut sender)?;
+
+            // add some jitter to start time to prevent all alpha innotec planner controlled heat pumps to start/stop at the exact same time
+            let worst_spot_prices = Self::add_jitter_to_spot_prices(&config, &worst_spot_prices);
 
             self.set_heating_schedule_from_worst_spot_prices(
                 &mut receiver,
@@ -429,57 +427,69 @@ impl WebsocketClient {
             let heatpump_time_zone = config.get_heatpump_time_zone()?;
 
             // get start time from first spot price
-            let from_hour = best_spot_prices
+            let from_time = best_spot_prices
                 .first()
                 .unwrap()
                 .from
-                .with_timezone(&heatpump_time_zone)
-                .hour();
+                .with_timezone(&heatpump_time_zone);
+            let from_hour = from_time.hour();
+            let from_minute = from_time.minute();
 
             // get finish time from last spot price
-            let till_hour = best_spot_prices
+            let till_time = best_spot_prices
                 .last()
                 .unwrap()
                 .till
-                .with_timezone(&heatpump_time_zone)
-                .hour();
+                .with_timezone(&heatpump_time_zone);
+
+            let till_hour = till_time.hour();
+            let till_minute = till_time.minute();
 
             if from_hour > till_hour {
                 // starts before midnight, finishes after
                 let first_item_id = content.item.item.first().unwrap().id.clone();
-                info!("Setting 1) to block {}:00 - {}:00", till_hour, from_hour);
+                info!(
+                    "Setting 1) to block {}:{:0>2} - {}:{:0>2}",
+                    till_hour, till_minute, from_hour, from_minute
+                );
                 self.send(
                     sender,
                     websocket::OwnedMessage::Text(format!(
                         "SET;set_{};{}",
                         first_item_id,
-                        60 * till_hour + 65536 * 60 * from_hour
+                        60 * till_hour + till_minute + 65536 * (60 * from_hour + from_minute)
                     )),
                 )?;
             } else {
                 // start and finish on same day
                 if from_hour > 0 {
                     let first_item_id = content.item.item.first().unwrap().id.clone();
-                    info!("Setting 1) to block 00:00 - {}:00", from_hour);
+                    info!(
+                        "Setting 1) to block 00:00 - {}:{:0>2}",
+                        from_hour, from_minute
+                    );
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
                             "SET;set_{};{}",
                             first_item_id,
-                            65536 * 60 * from_hour
+                            65536 * (60 * from_hour + from_minute)
                         )),
                     )?;
                 }
 
                 if till_hour > 0 {
                     let last_item_id = content.item.item.last().unwrap().id.clone();
-                    info!("Setting 5) to block {}:00 - 00:00", till_hour);
+                    info!(
+                        "Setting 5) to block {}:{:0>2} - 00:00",
+                        till_hour, till_minute
+                    );
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
                             "SET;set_{};{}",
                             last_item_id,
-                            60 * till_hour
+                            60 * till_hour + till_minute
                         )),
                     )?;
                 }
@@ -593,6 +603,28 @@ impl WebsocketClient {
         )?;
 
         Ok(())
+    }
+
+    fn add_jitter_to_spot_prices(config: &Config, spot_prices: &[SpotPrice]) -> Vec<SpotPrice> {
+        if spot_prices.is_empty() || config.jitter_max_minutes == 0 {
+            spot_prices.to_vec()
+        } else {
+            let mut rng = rand::thread_rng();
+            let shift_minutes =
+                rng.gen_range(0..2 * config.jitter_max_minutes) - config.jitter_max_minutes;
+
+            let mut updated_spot_prices: Vec<SpotPrice> = vec![];
+
+            for spot_price in spot_prices.iter() {
+                updated_spot_prices.push(SpotPrice {
+                    from: spot_price.from + Duration::minutes(shift_minutes),
+                    till: spot_price.till + Duration::minutes(shift_minutes),
+                    ..spot_price.clone()
+                })
+            }
+
+            updated_spot_prices
+        }
     }
 
     fn navigate_to(
@@ -845,7 +877,7 @@ impl WebsocketClient {
                 },
                 planning_strategy: PlanningStrategy::HighestPrice,
                 after: Some(now),
-                before: Some(now + Duration::hours(12)),
+                before: Some(now + Duration::hours(24)),
             })?;
 
         Ok(highest_price_desinfection_response)
@@ -1123,6 +1155,7 @@ mod tests {
                         },
                     ],
                 },
+                jitter_max_minutes: 15,
             },
             &vec![
                 SpotPrice {
