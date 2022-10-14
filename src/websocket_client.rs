@@ -538,58 +538,72 @@ impl WebsocketClient {
             let heatpump_time_zone = config.get_heatpump_time_zone()?;
 
             // get start time from first spot price
-            let from_hour = worst_spot_prices
+            let from_time = worst_spot_prices
                 .first()
                 .unwrap()
                 .from
-                .with_timezone(&heatpump_time_zone)
-                .hour();
+                .with_timezone(&heatpump_time_zone);
+
+            let from_hour = from_time.hour();
+            let from_minute = from_time.minute();
 
             // get finish time from last spot price
-            let till_hour = worst_spot_prices
+            let till_time = worst_spot_prices
                 .last()
                 .unwrap()
                 .till
-                .with_timezone(&heatpump_time_zone)
-                .hour();
+                .with_timezone(&heatpump_time_zone);
+
+            let till_hour = till_time.hour();
+            let till_minute = till_time.minute();
 
             if from_hour > till_hour {
                 // starts before midnight, finishes after
                 if from_hour > 0 {
                     let first_item_id = content.item.item.first().unwrap().id.clone();
-                    info!("Setting 1) to block {}:00 - 00:00", from_hour);
+                    info!(
+                        "Setting 1) to block {}:{:0>2} - 00:00",
+                        from_hour, from_minute
+                    );
+
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
                             "SET;set_{};{}",
                             first_item_id,
-                            60 * from_hour
+                            60 * from_hour + from_minute
                         )),
                     )?;
                 }
 
                 if till_hour > 0 {
                     let last_item_id = content.item.item.last().unwrap().id.clone();
-                    info!("Setting 5) to block 00:00 - {}:00", till_hour);
+                    info!(
+                        "Setting 5) to block 00:00 - {}:{:0>2}",
+                        till_hour, till_minute
+                    );
                     self.send(
                         sender,
                         websocket::OwnedMessage::Text(format!(
                             "SET;set_{};{}",
                             last_item_id,
-                            65536 * 60 * till_hour
+                            65536 * (60 * till_hour + till_minute)
                         )),
                     )?;
                 }
             } else {
                 // start and finish on same day
                 let first_item_id = content.item.item.first().unwrap().id.clone();
-                info!("Setting 1) to block {}:00 - {}:00", from_hour, till_hour);
+                info!(
+                    "Setting 1) to block {}:{:0>2} - {}:{:0>2}",
+                    from_hour, from_minute, till_hour, till_minute
+                );
                 self.send(
                     sender,
                     websocket::OwnedMessage::Text(format!(
                         "SET;set_{};{}",
                         first_item_id,
-                        60 * from_hour + 65536 * 60 * till_hour
+                        60 * from_hour + from_minute + 65536 * (60 * till_hour + till_minute)
                     )),
                 )?;
             }
