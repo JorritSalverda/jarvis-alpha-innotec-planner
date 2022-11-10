@@ -7,13 +7,13 @@ use jarvis_lib::model::{
     SpotPrice, SpotPricePlanner,
 };
 use jarvis_lib::planner_client::PlannerClient;
-use log::{debug, info};
 use quick_xml::de::from_str;
 use rand::Rng;
 use regex::Regex;
 use serde::Deserialize;
 use std::env;
 use std::error::Error;
+use tracing::{debug, info};
 use websocket::client::ClientBuilder;
 use websocket::OwnedMessage;
 

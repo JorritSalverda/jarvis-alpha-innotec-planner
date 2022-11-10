@@ -10,7 +10,10 @@ use websocket_client::WebsocketClient;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    json_env_logger::init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     let spot_prices_state_client_config = SpotPricesStateClientConfig::from_env().await?;
     let spot_prices_state_client = SpotPricesStateClient::new(spot_prices_state_client_config);
@@ -36,5 +39,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[ctor::ctor]
 fn init() {
-    json_env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 }
