@@ -49,7 +49,9 @@ jobs:
       GITVERSION_SEMVER: ${{ needs.gitversion.outputs.semVer }}
     steps:
       - uses: actions/checkout@v2
-      - uses: azure/setup-helm@v1
+      - uses: azure/setup-helm@v3
+        with:
+          version: v3.10.1
       - run: helm lint --with-subcharts helm/jarvis-alpha-innotec-planner
       - run: helm package --app-version $GITVERSION_SEMVER --version $GITVERSION_SEMVER --dependency-update helm/jarvis-alpha-innotec-planner
       - uses: actions/checkout@v2
