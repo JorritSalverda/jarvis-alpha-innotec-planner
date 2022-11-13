@@ -206,13 +206,15 @@ impl PlannerClient<Config> for WebsocketClient {
             // add some jitter to start time to prevent all alpha innotec planner controlled heat pumps to start/stop at the exact same time
             let worst_spot_prices = Self::add_jitter_to_spot_prices(&config, &worst_spot_prices);
 
-            self.set_heating_schedule_from_worst_spot_prices(
-                &mut receiver,
-                &mut sender,
-                &navigation,
-                &config,
-                &worst_spot_prices,
-            )?;
+            if config.enable_blocking_worst_heating_times {
+                self.set_heating_schedule_from_worst_spot_prices(
+                    &mut receiver,
+                    &mut sender,
+                    &navigation,
+                    &config,
+                    &worst_spot_prices,
+                )?;
+            }
         } else {
             info!("No available worst spot prices, not updating heatpump heating schedule.");
         }
@@ -1170,6 +1172,7 @@ mod tests {
                     ],
                 },
                 jitter_max_minutes: 15,
+                enable_blocking_worst_heating_times: true,
             },
             &vec![
                 SpotPrice {

@@ -17,6 +17,7 @@ pub struct Config {
     pub min_hours_since_last_desinfection: i64,
     pub max_hours_since_last_desinfection: i64,
     pub jitter_max_minutes: i64,
+    pub enable_blocking_worst_heating_times: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

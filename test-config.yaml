@@ -14,3 +14,4 @@ desiredTapWaterTemperature: 50.0
 minHoursSinceLastDesinfection: 96
 maxHoursSinceLastDesinfection: 240
 jitterMaxMinutes: 10
+enableBlockingWorstHeatingTimes: true
