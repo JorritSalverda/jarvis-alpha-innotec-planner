@@ -1178,8 +1178,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 4, 21).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 4, 21).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 4, 21, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 4, 21, 14, 0, 0).unwrap(),
                     market_price: 0.157,
                     market_price_tax: 0.0330708,
                     sourcing_markup_price: 0.017,
@@ -1188,8 +1188,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 4, 21).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 4, 21).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 4, 21, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 4, 21, 15, 0, 0).unwrap(),
                     market_price: 0.164,
                     market_price_tax: 0.0344316,
                     sourcing_markup_price: 0.017,
@@ -1258,14 +1258,14 @@ mod tests {
         };
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
-        let desinfection_finished_at = Utc.ymd(2022, 4, 30).and_hms(9, 37, 0);
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 4, 30, 9, 37, 0).unwrap();
         let highest_price_desinfection_response = PlanningResponse {
             spot_prices: vec![
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
                     market_price: 0.33,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1274,8 +1274,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1284,8 +1284,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1330,14 +1330,14 @@ mod tests {
 
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
-        let desinfection_finished_at = Utc.ymd(2022, 5, 11).and_hms(9, 37, 0);
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 5, 11, 9, 37, 0).unwrap();
         let highest_price_desinfection_response = PlanningResponse {
             spot_prices: vec![
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
                     market_price: 0.33,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1346,8 +1346,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1356,8 +1356,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1371,8 +1371,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1381,8 +1381,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1423,14 +1423,14 @@ mod tests {
 
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
-        let desinfection_finished_at = Utc.ymd(2022, 4, 30).and_hms(9, 37, 0);
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 4, 30, 9, 37, 0).unwrap();
         let highest_price_desinfection_response = PlanningResponse {
             spot_prices: vec![
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
                     market_price: 0.33,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1439,8 +1439,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1449,8 +1449,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1464,8 +1464,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1474,8 +1474,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1516,14 +1516,14 @@ mod tests {
 
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
-        let desinfection_finished_at = Utc.ymd(2022, 5, 5).and_hms(9, 37, 0);
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 5, 5, 9, 37, 0).unwrap();
         let highest_price_desinfection_response = PlanningResponse {
             spot_prices: vec![
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(18, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 18, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 19, 0, 0).unwrap(),
                     market_price: 0.33,
                     market_price_tax: 0.06,
                     sourcing_markup_price: 0.017,
@@ -1532,8 +1532,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 19, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 20, 0, 0).unwrap(),
                     market_price: 0.28,
                     market_price_tax: 0.05,
                     sourcing_markup_price: 0.017,
@@ -1542,8 +1542,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(21, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 20, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 21, 0, 0).unwrap(),
                     market_price: 0.25,
                     market_price_tax: 0.04,
                     sourcing_markup_price: 0.017,
@@ -1557,8 +1557,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
                     market_price: 0.06,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1567,8 +1567,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1577,8 +1577,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1619,14 +1619,14 @@ mod tests {
 
         let min_hours_since_last_desinfection: i64 = 96;
         let max_hours_since_last_desinfection: i64 = 240;
-        let desinfection_finished_at = Utc.ymd(2022, 5, 6).and_hms(9, 37, 0);
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 5, 6, 9, 37, 0).unwrap();
         let highest_price_desinfection_response = PlanningResponse {
             spot_prices: vec![
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(18, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 18, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 19, 0, 0).unwrap(),
                     market_price: 0.33,
                     market_price_tax: 0.06,
                     sourcing_markup_price: 0.017,
@@ -1635,8 +1635,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(19, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 19, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 20, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1645,8 +1645,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(20, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(21, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 20, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 21, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1660,8 +1660,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(13, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1670,8 +1670,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(14, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
                     market_price: 0.08,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
@@ -1680,8 +1680,8 @@ mod tests {
                 SpotPrice {
                     id: None,
                     source: None,
-                    from: Utc.ymd(2022, 5, 12).and_hms(15, 0, 0),
-                    till: Utc.ymd(2022, 5, 12).and_hms(16, 0, 0),
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
                     market_price: 0.09,
                     market_price_tax: 0.02,
                     sourcing_markup_price: 0.017,
