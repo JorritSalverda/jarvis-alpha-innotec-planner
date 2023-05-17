@@ -1,9 +1,7 @@
 FROM --platform=$BUILDPLATFORM rust:1.69 as builder
+
 ENV CARGO_TERM_COLOR=always \
-  CARGO_NET_GIT_FETCH_WITH_CLI=true \
-  CC_aarch64_unknown_linux_musl=clang \
-  AR_aarch64_unknown_linux_musl=llvm-ar \
-  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
+  CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /app
 
@@ -25,15 +23,15 @@ RUN mkdir -p .cargo ; \
   esac ; \
   cat .cargo/config
 
-RUN apt update && apt upgrade -y
-RUN apt install -y g++-aarch64-linux-gnu libc6-dev-arm64-cross libudev-dev
+RUN apt update && apt install --assume-yes --no-install-recommends  g++-aarch64-linux-gnu libc6-dev-arm64-cross libudev-dev
 
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-# RUN rustup toolchain install stable-aarch64-unknown-linux-gnu
+RUN rustup toolchain install stable-aarch64-unknown-linux-gnu
 
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
   CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
-  CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+  CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+  PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig/:${PKG_CONFIG_PATH}"
 
 COPY . .
 
