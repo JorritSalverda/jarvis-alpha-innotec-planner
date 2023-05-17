@@ -35,7 +35,7 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 
 COPY . .
 
-RUN cargo install --path . --root /usr/local/bin
+RUN cargo install --path . --root /usr/local
 
 FROM debian:bullseye-slim AS runtime
 # COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
