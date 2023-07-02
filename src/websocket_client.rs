@@ -925,7 +925,17 @@ fn is_desinfection_desired(
         let hours_since_last_desinfection =
             (planned_finished_at - *desinfection_finished_at).num_hours();
 
-        if hours_since_last_desinfection < min_hours_since_last_desinfection {
+        let lowest_total_price = lowest_price_desinfection_response.total_price(Some(|sp| {
+            sp.market_price + sp.market_price_tax + sp.sourcing_markup_price + sp.energy_tax_price
+        }));
+
+        if lowest_total_price <= 0.0 {
+            info!(
+                "Lowest prices is less then equal to zero ({}), desinfection IS desired",
+                lowest_total_price
+            );
+            Ok(true)
+        } else if hours_since_last_desinfection < min_hours_since_last_desinfection {
             info!("Hours since last desinfection less than min configured hours ({} < {}), desinfection is not desired", hours_since_last_desinfection, min_hours_since_last_desinfection);
             Ok(false)
         } else if hours_since_last_desinfection > max_hours_since_last_desinfection {
@@ -1247,7 +1257,7 @@ mod tests {
         let desinfection_load_profile = LoadProfile {
             sections: vec![
                 LoadProfileSection {
-                    duration_seconds: 7200,
+                    duration_seconds: 5400,
                     power_draw_watt: 2000.0,
                 },
                 LoadProfileSection {
@@ -1318,7 +1328,7 @@ mod tests {
         let desinfection_load_profile = LoadProfile {
             sections: vec![
                 LoadProfileSection {
-                    duration_seconds: 7200,
+                    duration_seconds: 5400,
                     power_draw_watt: 2000.0,
                 },
                 LoadProfileSection {
@@ -1406,12 +1416,105 @@ mod tests {
     }
 
     #[test]
+    fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_are_less_than_min_hours_but_total_price_for_desinfection_is_negative(
+    ) -> Result<(), Box<dyn Error>> {
+        let desinfection_load_profile = LoadProfile {
+            sections: vec![
+                LoadProfileSection {
+                    duration_seconds: 5400,
+                    power_draw_watt: 2000.0,
+                },
+                LoadProfileSection {
+                    duration_seconds: 1800,
+                    power_draw_watt: 8000.0,
+                },
+            ],
+        };
+
+        let min_hours_since_last_desinfection: i64 = 96;
+        let max_hours_since_last_desinfection: i64 = 240;
+        let desinfection_finished_at = Utc.with_ymd_and_hms(2022, 5, 11, 9, 37, 0).unwrap();
+        let highest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 13, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    market_price: 0.33,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    market_price: 0.08,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
+                    market_price: 0.09,
+                    market_price_tax: 0.02,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile.clone(),
+        };
+        let lowest_price_desinfection_response = PlanningResponse {
+            spot_prices: vec![
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 14, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    market_price: -0.40,
+                    market_price_tax: -0.10,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+                SpotPrice {
+                    id: None,
+                    source: None,
+                    from: Utc.with_ymd_and_hms(2022, 5, 12, 15, 0, 0).unwrap(),
+                    till: Utc.with_ymd_and_hms(2022, 5, 12, 16, 0, 0).unwrap(),
+                    market_price: -0.40,
+                    market_price_tax: -0.10,
+                    sourcing_markup_price: 0.017,
+                    energy_tax_price: 0.08,
+                },
+            ],
+            load_profile: desinfection_load_profile,
+        };
+
+        let desinfection_desired = is_desinfection_desired(
+            min_hours_since_last_desinfection,
+            max_hours_since_last_desinfection,
+            &desinfection_finished_at,
+            &lowest_price_desinfection_response,
+            &highest_price_desinfection_response,
+        )?;
+
+        assert_eq!(desinfection_desired, true);
+
+        Ok(())
+    }
+
+    #[test]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_are_greater_than_max_hours(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
             sections: vec![
                 LoadProfileSection {
-                    duration_seconds: 7200,
+                    duration_seconds: 5400,
                     power_draw_watt: 2000.0,
                 },
                 LoadProfileSection {
@@ -1504,7 +1607,7 @@ mod tests {
         let desinfection_load_profile = LoadProfile {
             sections: vec![
                 LoadProfileSection {
-                    duration_seconds: 7200,
+                    duration_seconds: 5400,
                     power_draw_watt: 2000.0,
                 },
                 LoadProfileSection {
@@ -1607,7 +1710,7 @@ mod tests {
         let desinfection_load_profile = LoadProfile {
             sections: vec![
                 LoadProfileSection {
-                    duration_seconds: 7200,
+                    duration_seconds: 5400,
                     power_draw_watt: 2000.0,
                 },
                 LoadProfileSection {
