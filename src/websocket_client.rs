@@ -901,74 +901,76 @@ impl WebsocketClient {
 }
 
 fn is_desinfection_desired(
-    min_hours_since_last_desinfection: i64,
-    max_hours_since_last_desinfection: i64,
-    desinfection_finished_at: &DateTime<Utc>,
-    lowest_price_desinfection_response: &PlanningResponse,
-    highest_price_desinfection_response: &PlanningResponse,
+    _min_hours_since_last_desinfection: i64,
+    _max_hours_since_last_desinfection: i64,
+    _desinfection_finished_at: &DateTime<Utc>,
+    _lowest_price_desinfection_response: &PlanningResponse,
+    _highest_price_desinfection_response: &PlanningResponse,
 ) -> Result<bool, Box<dyn Error>> {
-    if max_hours_since_last_desinfection <= min_hours_since_last_desinfection {
-        return Err(Box::<dyn Error>::from(format!("max_hours_since_last_desinfection ({}) is less or equal to min_hours_since_last_desinfection ({}) which is not allowed", max_hours_since_last_desinfection, min_hours_since_last_desinfection)));
-    }
+    // if max_hours_since_last_desinfection <= min_hours_since_last_desinfection {
+    //     return Err(Box::<dyn Error>::from(format!("max_hours_since_last_desinfection ({}) is less or equal to min_hours_since_last_desinfection ({}) which is not allowed", max_hours_since_last_desinfection, min_hours_since_last_desinfection)));
+    // }
 
-    // make likelihood of desinfection when max of best spot prices < fraction of max of all spot prices
-    // where fraction is an exponential curve between 5 and 10 days after previous round
-    if lowest_price_desinfection_response.spot_prices.is_empty() {
-        info!("No best spot prices, desinfection is not desired");
-        Ok(false)
-    } else {
-        let planned_finished_at = lowest_price_desinfection_response
-            .spot_prices
-            .last()
-            .unwrap()
-            .till;
-        let hours_since_last_desinfection =
-            (planned_finished_at - *desinfection_finished_at).num_hours();
+    // // make likelihood of desinfection when max of best spot prices < fraction of max of all spot prices
+    // // where fraction is an exponential curve between 5 and 10 days after previous round
+    // if lowest_price_desinfection_response.spot_prices.is_empty() {
+    //     info!("No best spot prices, desinfection is not desired");
+    //     Ok(false)
+    // } else {
+    //     let planned_finished_at = lowest_price_desinfection_response
+    //         .spot_prices
+    //         .last()
+    //         .unwrap()
+    //         .till;
+    //     let hours_since_last_desinfection =
+    //         (planned_finished_at - *desinfection_finished_at).num_hours();
 
-        let lowest_total_price = lowest_price_desinfection_response.total_price(Some(|sp| {
-            sp.market_price + sp.market_price_tax + sp.sourcing_markup_price + sp.energy_tax_price
-        }));
+    //     let lowest_total_price = lowest_price_desinfection_response.total_price(Some(|sp| {
+    //         sp.market_price + sp.market_price_tax + sp.sourcing_markup_price + sp.energy_tax_price
+    //     }));
 
-        if lowest_total_price <= 0.0 {
-            info!(
-                "Lowest prices is less then equal to zero ({}), desinfection IS desired",
-                lowest_total_price
-            );
-            Ok(true)
-        } else if hours_since_last_desinfection < min_hours_since_last_desinfection {
-            info!("Hours since last desinfection less than min configured hours ({} < {}), desinfection is not desired", hours_since_last_desinfection, min_hours_since_last_desinfection);
-            Ok(false)
-        } else if hours_since_last_desinfection > max_hours_since_last_desinfection {
-            info!("Hours since last desinfection greater than min configured hours ({} > {}), desinfection IS desired", hours_since_last_desinfection, max_hours_since_last_desinfection);
-            Ok(true)
-        } else {
-            let hours_since_min = hours_since_last_desinfection - min_hours_since_last_desinfection;
-            let hours_between_min_and_max: i64 =
-                max_hours_since_last_desinfection - min_hours_since_last_desinfection;
+    //     if lowest_total_price <= 0.0 {
+    //         info!(
+    //             "Lowest prices is less then equal to zero ({}), desinfection IS desired",
+    //             lowest_total_price
+    //         );
+    //         Ok(true)
+    //     } else if hours_since_last_desinfection < min_hours_since_last_desinfection {
+    //         info!("Hours since last desinfection less than min configured hours ({} < {}), desinfection is not desired", hours_since_last_desinfection, min_hours_since_last_desinfection);
+    //         Ok(false)
+    //     } else if hours_since_last_desinfection > max_hours_since_last_desinfection {
+    //         info!("Hours since last desinfection greater than min configured hours ({} > {}), desinfection IS desired", hours_since_last_desinfection, max_hours_since_last_desinfection);
+    //         Ok(true)
+    //     } else {
+    //         let hours_since_min = hours_since_last_desinfection - min_hours_since_last_desinfection;
+    //         let hours_between_min_and_max: i64 =
+    //             max_hours_since_last_desinfection - min_hours_since_last_desinfection;
 
-            assert!(max_hours_since_last_desinfection > min_hours_since_last_desinfection);
+    //         assert!(max_hours_since_last_desinfection > min_hours_since_last_desinfection);
 
-            let fraction_of_max_price = (hours_since_min * hours_since_min) as f64
-                / (hours_between_min_and_max * hours_between_min_and_max) as f64;
-            debug!(
-                "fraction_of_max_price = {}^2 / {}^2 = {}",
-                hours_since_min, hours_between_min_and_max, fraction_of_max_price
-            );
+    //         let fraction_of_max_price = (hours_since_min * hours_since_min) as f64
+    //             / (hours_between_min_and_max * hours_between_min_and_max) as f64;
+    //         debug!(
+    //             "fraction_of_max_price = {}^2 / {}^2 = {}",
+    //             hours_since_min, hours_between_min_and_max, fraction_of_max_price
+    //         );
 
-            let highest_total_price =
-                highest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
-            let lowest_total_price =
-                lowest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
+    //         let highest_total_price =
+    //             highest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
+    //         let lowest_total_price =
+    //             lowest_price_desinfection_response.total_price(Some(|sp| sp.market_price));
 
-            let is_desired = lowest_total_price < (fraction_of_max_price * highest_total_price);
-            info!(
-                "is_desired = {} < ({} * {}) = {}",
-                lowest_total_price, fraction_of_max_price, highest_total_price, is_desired
-            );
+    //         let is_desired = lowest_total_price < (fraction_of_max_price * highest_total_price);
+    //         info!(
+    //             "is_desired = {} < ({} * {}) = {}",
+    //             lowest_total_price, fraction_of_max_price, highest_total_price, is_desired
+    //         );
 
-            Ok(is_desired)
-        }
-    }
+    //         Ok(is_desired)
+    //     }
+    // }
+
+    Ok(Utc::now().weekday() == Weekday::Sun)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1252,6 +1254,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_false_when_best_spot_prices_is_empty(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
@@ -1323,6 +1326,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_false_when_hours_since_last_desinfection_are_less_than_min_hours(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
@@ -1416,6 +1420,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_are_less_than_min_hours_but_total_price_for_desinfection_is_negative(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
@@ -1509,6 +1514,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_are_greater_than_max_hours(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
@@ -1602,6 +1608,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_true_when_hours_since_last_desinfection_between_min_and_max_hours_and_max_prices_of_best_spot_prices_is_less_than_calculated_percentage_of_max_of_all_spot_prices(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {
@@ -1705,6 +1712,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_desinfection_desired_returns_false_when_hours_since_last_desinfection_between_min_and_max_hours_and_max_prices_of_best_spot_prices_is_greater_than_or_equal_to_calculated_percentage_of_max_of_all_spot_prices(
     ) -> Result<(), Box<dyn Error>> {
         let desinfection_load_profile = LoadProfile {

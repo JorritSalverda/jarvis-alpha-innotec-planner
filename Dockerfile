@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM rust:1.69 as builder
+FROM --platform=$BUILDPLATFORM rust:1.80 as builder
 
 ENV CARGO_TERM_COLOR=always \
   CARGO_NET_GIT_FETCH_WITH_CLI=true
